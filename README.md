@@ -51,6 +51,18 @@ KompaktX adds a practical, eink-friendly feature layer on top of the stock Mudit
 - **Permission banner** that clears itself as setup is completed
 ---
 
+## 📸 Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/01.png" width="30%">
+  &nbsp;
+  <img src="docs/screenshots/02.png" width="30%">
+  &nbsp;
+  <img src="docs/screenshots/03.png" width="30%">
+</p>
+
+---
+
 ## ✨ Features
 
 ### Notification Tray
