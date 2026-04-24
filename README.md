@@ -61,6 +61,14 @@ KompaktX adds a practical, eink-friendly feature layer on top of the stock Mudit
   <img src="docs/screenshots/03.png" width="30%">
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/04.png" width="30%">
+  &nbsp;
+  <img src="docs/screenshots/05.png" width="30%">
+  &nbsp;
+  <img src="docs/screenshots/06.png" width="30%">
+</p>
+
 ---
 
 ## ✨ Features
