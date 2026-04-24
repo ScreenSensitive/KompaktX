@@ -2,8 +2,7 @@
 
 **Extended feature overlay for the Mudita Kompakt**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Platform](https://img.shields.io/badge/Platform-Android-green.svg)](https://www.android.com/)
+[![License: GPL v2](https://img.shields.io/badge/License-GPL_v2-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)[![Platform](https://img.shields.io/badge/Platform-Android-green.svg)](https://www.android.com/)
 [![Built with Kotlin](https://img.shields.io/badge/Kotlin-Jetpack%20Compose-7F52FF.svg)](https://kotlinlang.org/)
 [![Device](https://img.shields.io/badge/Device-Mudita%20Kompakt-black.svg)](https://mudita.com/)
 
