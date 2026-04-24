@@ -41,7 +41,7 @@ KompaktX adds a practical, eink-friendly feature layer on top of the stock Mudit
 - **notification tray** with multiple trigger modes
 - **Heads-up popups (banner)** for incoming notifications
 - **Inline replies** and notification action buttons
-- In-tray **quick settings** for Wi-Fi, Bluetooth, Torch, brightness, and e-ink modes
+- **In-tray quick settings** for Wi-Fi, Bluetooth, Torch, brightness, and eink modes
 - **Recent apps row** with per-app hiding
 - **Hardware shortcut remapping** for Recents and Back button gestures
 - **Volume long press → media skip** when media is playing
@@ -49,6 +49,8 @@ KompaktX adds a practical, eink-friendly feature layer on top of the stock Mudit
 - **Custom ringtone / notification / alarm tone import**
 - **Overlay-wide font size presets**
 - **Permission banner** that clears itself as setup is completed
+- **Manual Refresh** for manually wiping ghosting from the eink panel
+
 ---
 
 ## 📸 Screenshots
