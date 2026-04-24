@@ -1,0 +1,27 @@
+*.iml
+.gradle
+/local.properties
+/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Build outputs
+**/build/
+app/build/
+
+# Editor swap / backup files
+*.swp
+*.swo
+*~
+*.bak
+*.backup
+*.orig
+*.old
+.*.kate-swp
+
+# Claude Code local tooling
+.claude/

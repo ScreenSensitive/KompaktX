@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">KompaktX</string>
+    <string name="accessibility_service_description">Allows KompaktX to intercept hardware buttons for panel triggers, shortcuts, and media controls.</string>
+</resources>
