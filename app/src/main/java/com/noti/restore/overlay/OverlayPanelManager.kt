@@ -45,13 +45,14 @@ import com.noti.restore.eink.MeinkController
 import com.noti.restore.service.KompaktXListener
 import com.noti.restore.service.NotificationAction
 import com.noti.restore.service.NotificationPopupData
+import com.noti.restore.ui.RecentsLayoutMode
 import com.noti.restore.ui.TriggerMode
 
 private const val TAG = "OverlayPanelManager"
 
-// Pure B/W for e-ink
-private const val WHITE = 0xFFFFFFFF.toInt()
-private const val BLACK = 0xFF000000.toInt()
+// Pure black/white literals — used by overlay theme switch.
+private const val PURE_WHITE = 0xFFFFFFFF.toInt()
+private const val PURE_BLACK = 0xFF000000.toInt()
 private const val BORDER_WIDTH_DP = 2f
 
 // Emoji regex for stripping from app labels
@@ -89,6 +90,18 @@ object OverlayPanelManager {
     var einkControlsEnabled = false
     var hiddenNotiApps: Set<String> = emptySet()
     var hiddenRecentApps: Set<String> = emptySet()
+    var recentsLayoutMode: Int = RecentsLayoutMode.INLINE
+    var hideAppIcons: Boolean = false
+    var tabPosition: Int = com.noti.restore.ui.TabPosition.TOP
+
+    // Dark mode for the overlay UI — set from MainActivity based on theme pref + system uiMode.
+    // Swaps every WHITE/BLACK reference within the overlay so the panel inverts cleanly.
+    @Volatile var darkMode: Boolean = false
+
+    // Semantic colors that follow [darkMode]. Defined as properties (not consts) so they
+    // re-evaluate on every read and pick up theme changes without any per-site changes.
+    private val WHITE: Int get() = if (darkMode) PURE_BLACK else PURE_WHITE
+    private val BLACK: Int get() = if (darkMode) PURE_WHITE else PURE_BLACK
 
     // Track which WM was used for heads-up (accessibility overlay vs normal)
     private var headsUpUsingAccessibility = false
@@ -174,7 +187,7 @@ object OverlayPanelManager {
         when (triggerMode) {
             TriggerMode.SWIPE_LEFT_EDGE -> {
                 setupEdgeStrip(context, windowType, dp,
-                    width = (20 * dp).toInt(), height = (100 * dp).toInt(),
+                    width = (16 * dp).toInt(), height = (80 * dp).toInt(),
                     gravityH = Gravity.START, gravityV = Gravity.TOP, yPos = 0
                 ) { event ->
                     handleHorizontalSwipe(event, swipeThresholdPx, swipeRight = true) { showPanel(context) }
@@ -182,7 +195,7 @@ object OverlayPanelManager {
             }
             TriggerMode.SWIPE_RIGHT_EDGE -> {
                 setupEdgeStrip(context, windowType, dp,
-                    width = (20 * dp).toInt(), height = (100 * dp).toInt(),
+                    width = (16 * dp).toInt(), height = (80 * dp).toInt(),
                     gravityH = Gravity.END, gravityV = Gravity.TOP, yPos = 0
                 ) { event ->
                     handleHorizontalSwipe(event, swipeThresholdPx, swipeRight = false) { showPanel(context) }
@@ -190,7 +203,7 @@ object OverlayPanelManager {
             }
             TriggerMode.PULL_UP_BOTTOM_RIGHT -> {
                 setupEdgeStrip(context, windowType, dp,
-                    width = (40 * dp).toInt(), height = (100 * dp).toInt(),
+                    width = (80 * dp).toInt(), height = (16 * dp).toInt(),
                     gravityH = Gravity.END, gravityV = Gravity.BOTTOM, yPos = 0
                 ) { event ->
                     handleVerticalSwipe(event, swipeThresholdPx, swipeUp = true) { showPanel(context) }
@@ -198,7 +211,7 @@ object OverlayPanelManager {
             }
             TriggerMode.PULL_UP_BOTTOM_LEFT -> {
                 setupEdgeStrip(context, windowType, dp,
-                    width = (40 * dp).toInt(), height = (100 * dp).toInt(),
+                    width = (80 * dp).toInt(), height = (16 * dp).toInt(),
                     gravityH = Gravity.START, gravityV = Gravity.BOTTOM, yPos = 0
                 ) { event ->
                     handleVerticalSwipe(event, swipeThresholdPx, swipeUp = true) { showPanel(context) }
@@ -257,7 +270,7 @@ object OverlayPanelManager {
                 else
                     @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_SYSTEM_ALERT
 
-                val flashView = View(context).apply { setBackgroundColor(BLACK) }
+                val flashView = View(context).apply { setBackgroundColor(PURE_BLACK) }
                 val params = WindowManager.LayoutParams(
                     WindowManager.LayoutParams.MATCH_PARENT,
                     WindowManager.LayoutParams.MATCH_PARENT,
@@ -271,7 +284,7 @@ object OverlayPanelManager {
 
                 // Hold black for 300ms, then flash white for 200ms, then remove
                 handler.postDelayed({
-                    try { flashView.setBackgroundColor(WHITE) } catch (_: Exception) {}
+                    try { flashView.setBackgroundColor(PURE_WHITE) } catch (_: Exception) {}
                     handler.postDelayed({
                         try { windowManager?.removeView(flashView) } catch (_: Exception) {}
                     }, 200)
@@ -368,7 +381,12 @@ object OverlayPanelManager {
     // ─── Notification Panel (full screen, no animation, no shadow, paginated) ────
 
     private var allFlatNotifications: List<StatusBarNotification> = emptyList()
-    private var panelTab = 0  // 0 = notifications, 1 = settings
+
+    // Tab identifiers — values are stable across layout modes
+    private val TAB_RECENTS = 0
+    private val TAB_NOTIFICATIONS = 1
+    private val TAB_SETTINGS = 2
+    private var panelTab = TAB_NOTIFICATIONS
 
     private fun showPanel(context: Context) {
         if (panelView != null) return
@@ -507,133 +525,37 @@ object OverlayPanelManager {
         topBar.addView(rightCol)
         panelCard.addView(topBar)
 
-        // ── Tab switcher: small pill toggle ──
-        val tabBar = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setPadding((16 * dp).toInt(), (4 * dp).toInt(), (16 * dp).toInt(), (6 * dp).toInt())
+        // ── Tab switcher: small pill toggle (placed top or bottom per [tabPosition]) ──
+        // In tabbed layout mode, Recents becomes its own tab to the LEFT of Notifications.
+        val showRecentsTab = recentAppsEnabled && recentsLayoutMode == RecentsLayoutMode.TABBED
+        val tabs: List<Pair<Int, String>> = buildList {
+            if (showRecentsTab) add(TAB_RECENTS to "Recents")
+            add(TAB_NOTIFICATIONS to "Notifications")
+            add(TAB_SETTINGS to "Settings")
         }
-        val tabContainer = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            val bg = GradientDrawable().apply {
-                cornerRadius = 100 * dp; setStroke(borderW, BLACK); setColor(WHITE)
-            }
-            background = bg
+        // Snap selection to a visible tab.
+        if (tabs.none { it.first == panelTab }) panelTab = TAB_NOTIFICATIONS
+
+        val tabBar = buildTabBar(context, dp, borderW, tabs)
+        val tabContent = buildTabContent(context, dp, borderW)
+
+        val placeTabsAtBottom = tabPosition == com.noti.restore.ui.TabPosition.BOTTOM
+        if (!placeTabsAtBottom) {
+            panelCard.addView(tabBar)
+            panelCard.addView(makeThinDivider(context, dp))
         }
-        val tabLabels = listOf("Notifications", "Settings")
-        for (i in tabLabels.indices) {
-            val selected = i == panelTab
-            val tabBg = GradientDrawable().apply {
-                cornerRadius = 100 * dp
-                if (selected) setColor(BLACK) else setColor(0x00000000) // transparent
-            }
-            tabContainer.addView(TextView(context).apply {
-                text = tabLabels[i]
-                setTextColor(if (selected) WHITE else BLACK)
-                textSize = baseSmallSize; typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER; background = tabBg
-                setPadding((16 * dp).toInt(), (6 * dp).toInt(), (16 * dp).toInt(), (6 * dp).toInt())
-                setOnClickListener {
-                    if (panelTab != i) { panelTab = i; buildAndShowPanel(context) }
-                }
-            })
-        }
-        tabBar.addView(tabContainer)
-        panelCard.addView(tabBar)
-        panelCard.addView(makeThinDivider(context, dp))
-
-        // ── Tab content ──
-        if (panelTab == 0) {
-            // ─── Notifications tab ───
-            // Media widget at top if playing
-            val mediaInfo = KompaktXListener.externalMediaInfo.value
-            if (mediaInfo != null && mediaInfo.title != null) {
-                panelCard.addView(buildMediaWidget(context, dp, mediaInfo))
-                panelCard.addView(makeThinDivider(context, dp))
-            }
-
-            // Clear row
-            if (allFlatNotifications.isNotEmpty()) {
-                val clearRow = LinearLayout(context).apply {
-                    orientation = LinearLayout.HORIZONTAL; gravity = Gravity.END
-                    setPadding((14 * dp).toInt(), (2 * dp).toInt(), (14 * dp).toInt(), (0 * dp).toInt())
-                }
-                clearRow.addView(TextView(context).apply {
-                    text = "Clear All"; setTextColor(BLACK); textSize = baseTinySize
-                    typeface = Typeface.DEFAULT_BOLD
-                    setPadding((10 * dp).toInt(), (4 * dp).toInt(), (10 * dp).toInt(), (4 * dp).toInt())
-                    background = GradientDrawable().apply {
-                        setColor(WHITE); setStroke(borderW, BLACK); cornerRadius = 100 * dp
-                    }
-                    setOnClickListener {
-                        refreshRunnable?.let { handler.removeCallbacks(it) }
-                        KompaktXListener.clearAll(); dismissPanel()
-                    }
-                })
-                panelCard.addView(clearRow)
-            }
-
-            // Scrollable notification list
-            val notiScroll = ScrollView(context).apply {
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
-                ); isVerticalScrollBarEnabled = false
-            }
-            val notiContainer = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding((14 * dp).toInt(), (4 * dp).toInt(), (14 * dp).toInt(), (4 * dp).toInt())
-            }
-            if (allFlatNotifications.isEmpty()) {
-                notiContainer.addView(TextView(context).apply {
-                    text = "No notifications"; setTextColor(BLACK); textSize = baseTitleSize
-                    gravity = Gravity.CENTER
-                    setPadding(0, (24 * dp).toInt(), 0, (24 * dp).toInt())
-                })
-            } else {
-                allFlatNotifications.forEachIndexed { idx, sbn ->
-                    notiContainer.addView(buildNotificationEntry(context, dp, sbn))
-                    if (idx < allFlatNotifications.size - 1) notiContainer.addView(makeThinDivider(context, dp))
-                }
-            }
-            notiScroll.addView(notiContainer)
-            panelCard.addView(notiScroll)
-
-        } else {
-            // ─── Settings tab ───
-            val settingsScroll = ScrollView(context).apply {
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
-                ); isVerticalScrollBarEnabled = false
-            }
-            val settingsContent = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding((16 * dp).toInt(), (8 * dp).toInt(), (16 * dp).toInt(), (8 * dp).toInt())
-            }
-
-            // Toggle pills (WiFi, BT, Light)
-            settingsContent.addView(buildSettingsGrid(context, dp, borderW))
-
-            // Brightness slider right below toggles
-            settingsContent.addView(buildBrightnessSection(context, dp))
-
-            // Refresh mode circles
-            if (MeinkController.isAvailable) {
-                settingsContent.addView(buildRefreshModeCircles(context, dp, borderW))
-            }
-
-
-            settingsScroll.addView(settingsContent)
-            panelCard.addView(settingsScroll)
+        panelCard.addView(tabContent)
+        if (placeTabsAtBottom) {
+            panelCard.addView(makeThinDivider(context, dp))
+            panelCard.addView(tabBar)
         }
 
-        // ── Bottom bar: recents ──
-        if (recentAppsEnabled) {
+        // ── Bottom bar: recents (inline layout only) ──
+        val showInlineRecents = recentAppsEnabled && recentsLayoutMode == RecentsLayoutMode.INLINE
+        if (showInlineRecents) {
             panelCard.addView(makeThinDivider(context, dp).apply {
                 (layoutParams as? LinearLayout.LayoutParams)?.topMargin = (4 * dp).toInt()
             })
-        }
-
-        if (recentAppsEnabled) {
             val recentsSection = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding((14 * dp).toInt(), (6 * dp).toInt(), (14 * dp).toInt(), (10 * dp).toInt())
@@ -651,17 +573,155 @@ object OverlayPanelManager {
         }
     }
 
+    private fun buildTabBar(
+        context: Context, dp: Float, borderW: Int, tabs: List<Pair<Int, String>>
+    ): View {
+        val tabBar = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding((16 * dp).toInt(), (4 * dp).toInt(), (16 * dp).toInt(), (6 * dp).toInt())
+        }
+        val tabContainer = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = GradientDrawable().apply {
+                cornerRadius = 100 * dp; setStroke(borderW, BLACK); setColor(WHITE)
+            }
+        }
+        for ((tabId, label) in tabs) {
+            val selected = tabId == panelTab
+            val tabBg = GradientDrawable().apply {
+                cornerRadius = 100 * dp
+                if (selected) setColor(BLACK) else setColor(0x00000000)
+            }
+            tabContainer.addView(TextView(context).apply {
+                text = label
+                setTextColor(if (selected) WHITE else BLACK)
+                textSize = baseSmallSize; typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER; background = tabBg
+                setPadding((16 * dp).toInt(), (6 * dp).toInt(), (16 * dp).toInt(), (6 * dp).toInt())
+                setOnClickListener {
+                    if (panelTab != tabId) { panelTab = tabId; buildAndShowPanel(context) }
+                }
+            })
+        }
+        tabBar.addView(tabContainer)
+        return tabBar
+    }
+
+    private fun buildTabContent(context: Context, dp: Float, borderW: Int): View {
+        val container = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+            )
+        }
+        when (panelTab) {
+            TAB_RECENTS -> {
+                val recentsScroll = ScrollView(context).apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+                    ); isVerticalScrollBarEnabled = false
+                }
+                recentsScroll.addView(buildRecentsListContent(context, dp))
+                container.addView(recentsScroll)
+            }
+            TAB_NOTIFICATIONS -> {
+                val mediaInfo = KompaktXListener.externalMediaInfo.value
+                if (mediaInfo != null && mediaInfo.title != null) {
+                    container.addView(buildMediaWidget(context, dp, mediaInfo))
+                    container.addView(makeThinDivider(context, dp))
+                }
+                val notiScroll = ScrollView(context).apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+                    ); isVerticalScrollBarEnabled = false
+                }
+                val notiContainer = LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding((14 * dp).toInt(), (4 * dp).toInt(), (14 * dp).toInt(), (4 * dp).toInt())
+                }
+                // Header row: title on the left, "Clear all" text-link on the right.
+                // Same horizontal padding as the notification entries below for clean alignment.
+                if (allFlatNotifications.isNotEmpty()) {
+                    val header = LinearLayout(context).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        setPadding(0, (4 * dp).toInt(), 0, (6 * dp).toInt())
+                    }
+                    header.addView(TextView(context).apply {
+                        text = "${allFlatNotifications.size} notification" +
+                            if (allFlatNotifications.size == 1) "" else "s"
+                        setTextColor(BLACK); textSize = baseTinySize
+                        typeface = Typeface.DEFAULT_BOLD
+                        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    })
+                    header.addView(TextView(context).apply {
+                        text = "Clear all"; setTextColor(BLACK); textSize = baseTinySize
+                        typeface = Typeface.DEFAULT_BOLD
+                        setPadding((6 * dp).toInt(), (2 * dp).toInt(), 0, (2 * dp).toInt())
+                        setOnClickListener {
+                            refreshRunnable?.let { handler.removeCallbacks(it) }
+                            KompaktXListener.clearAll(); dismissPanel()
+                        }
+                    })
+                    notiContainer.addView(header)
+                    notiContainer.addView(makeThinDivider(context, dp).apply {
+                        (layoutParams as? LinearLayout.LayoutParams)?.apply {
+                            marginStart = 0; marginEnd = 0
+                            topMargin = 0; bottomMargin = (4 * dp).toInt()
+                        }
+                    })
+                }
+                if (allFlatNotifications.isEmpty()) {
+                    notiContainer.addView(TextView(context).apply {
+                        text = "No notifications"; setTextColor(BLACK); textSize = baseTitleSize
+                        gravity = Gravity.CENTER
+                        setPadding(0, (24 * dp).toInt(), 0, (24 * dp).toInt())
+                    })
+                } else {
+                    allFlatNotifications.forEachIndexed { idx, sbn ->
+                        notiContainer.addView(buildNotificationEntry(context, dp, sbn))
+                        if (idx < allFlatNotifications.size - 1) notiContainer.addView(makeThinDivider(context, dp))
+                    }
+                }
+                notiScroll.addView(notiContainer)
+                container.addView(notiScroll)
+            }
+            TAB_SETTINGS -> {
+                val settingsScroll = ScrollView(context).apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+                    ); isVerticalScrollBarEnabled = false
+                }
+                val settingsContent = LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding((16 * dp).toInt(), (8 * dp).toInt(), (16 * dp).toInt(), (8 * dp).toInt())
+                }
+                settingsContent.addView(buildSettingsGrid(context, dp, borderW))
+                settingsContent.addView(buildBrightnessSection(context, dp))
+                if (MeinkController.isAvailable) {
+                    settingsContent.addView(buildRefreshModeCircles(context, dp, borderW))
+                }
+                settingsScroll.addView(settingsContent)
+                container.addView(settingsScroll)
+            }
+        }
+        return container
+    }
+
     private fun buildAppHeader(context: Context, dp: Float, pkg: String, appName: String, count: Int): View {
         val appHeader = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, (6 * dp).toInt(), 0, (2 * dp).toInt())
         }
-        val iconSize = (20 * dp).toInt()
-        appHeader.addView(ImageView(context).apply {
-            layoutParams = LinearLayout.LayoutParams(iconSize, iconSize).apply { marginEnd = (6 * dp).toInt() }
-            try { setImageDrawable(context.packageManager.getApplicationIcon(pkg)) } catch (_: Exception) {}
-        })
+        if (!hideAppIcons) {
+            val iconSize = (20 * dp).toInt()
+            appHeader.addView(ImageView(context).apply {
+                layoutParams = LinearLayout.LayoutParams(iconSize, iconSize).apply { marginEnd = (6 * dp).toInt() }
+                try { setImageDrawable(context.packageManager.getApplicationIcon(pkg)) } catch (_: Exception) {}
+            })
+        }
         appHeader.addView(TextView(context).apply {
             text = appName
             setTextColor(BLACK); textSize = baseSmallSize; typeface = Typeface.DEFAULT_BOLD
@@ -726,15 +786,17 @@ object OverlayPanelManager {
             gravity = Gravity.CENTER_VERTICAL
         }
 
-        // App icon on the left
-        val iconSize = (24 * dp).toInt()
-        entry.addView(ImageView(context).apply {
-            layoutParams = LinearLayout.LayoutParams(iconSize, iconSize).apply {
-                marginEnd = (8 * dp).toInt()
-                gravity = Gravity.CENTER_VERTICAL
-            }
-            try { setImageDrawable(context.packageManager.getApplicationIcon(sbn.packageName)) } catch (_: Exception) {}
-        })
+        // App icon on the left (skipped when hideAppIcons is on)
+        if (!hideAppIcons) {
+            val iconSize = (24 * dp).toInt()
+            entry.addView(ImageView(context).apply {
+                layoutParams = LinearLayout.LayoutParams(iconSize, iconSize).apply {
+                    marginEnd = (8 * dp).toInt()
+                    gravity = Gravity.CENTER_VERTICAL
+                }
+                try { setImageDrawable(context.packageManager.getApplicationIcon(sbn.packageName)) } catch (_: Exception) {}
+            })
+        }
 
         val textCol = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -1775,12 +1837,16 @@ object OverlayPanelManager {
                 }
             }
             val iconSize = (40 * dp).toInt()
-            item.addView(ImageView(context).apply {
-                layoutParams = LinearLayout.LayoutParams(iconSize, iconSize).apply {
-                    gravity = Gravity.CENTER_HORIZONTAL
-                }
-                try { setImageDrawable(context.packageManager.getApplicationIcon(appInfo.packageName)) } catch (_: Exception) {}
-            })
+            if (hideAppIcons) {
+                item.addView(buildLetterBadge(context, dp, appInfo.label, iconSize))
+            } else {
+                item.addView(ImageView(context).apply {
+                    layoutParams = LinearLayout.LayoutParams(iconSize, iconSize).apply {
+                        gravity = Gravity.CENTER_HORIZONTAL
+                    }
+                    try { setImageDrawable(context.packageManager.getApplicationIcon(appInfo.packageName)) } catch (_: Exception) {}
+                })
+            }
             item.addView(TextView(context).apply {
                 text = stripEmojis(appInfo.label); setTextColor(BLACK); textSize = baseTinySize; gravity = Gravity.CENTER
                 maxLines = 1; ellipsize = TextUtils.TruncateAt.END
@@ -1791,6 +1857,110 @@ object OverlayPanelManager {
             row.addView(item)
         }
         return row
+    }
+
+    /** Vertical list of recent apps for the dedicated tab (TABBED layout).
+     *  Text-only rows when [hideAppIcons] is on; otherwise icon + label.
+     *  Last-opened time is shown on the right. No dividers between rows. */
+    private fun buildRecentsListContent(context: Context, dp: Float): View {
+        val container = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((14 * dp).toInt(), (6 * dp).toInt(), (14 * dp).toInt(), (10 * dp).toInt())
+        }
+        val recentApps = getRecentApps(context, 30)
+        if (recentApps.isEmpty()) {
+            container.addView(TextView(context).apply {
+                text = "Grant Usage Access in Settings"
+                setTextColor(BLACK); textSize = baseTitleSize; gravity = Gravity.CENTER
+                setPadding(0, (24 * dp).toInt(), 0, (24 * dp).toInt())
+            })
+            return container
+        }
+        recentApps.forEach { appInfo ->
+            val row = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, (10 * dp).toInt(), 0, (10 * dp).toInt())
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+                setOnClickListener { launchApp(context, appInfo.packageName) }
+                setOnLongClickListener {
+                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = android.net.Uri.parse("package:${appInfo.packageName}")
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(intent); dismissPanel(); true
+                }
+            }
+            // Icon (only when icons are not hidden — text-only mode otherwise)
+            if (!hideAppIcons) {
+                val iconSize = (32 * dp).toInt()
+                row.addView(ImageView(context).apply {
+                    layoutParams = LinearLayout.LayoutParams(iconSize, iconSize).apply {
+                        marginEnd = (12 * dp).toInt()
+                    }
+                    try { setImageDrawable(context.packageManager.getApplicationIcon(appInfo.packageName)) } catch (_: Exception) {}
+                })
+            }
+            row.addView(TextView(context).apply {
+                text = stripEmojis(appInfo.label); setTextColor(BLACK); textSize = baseTextSize + 1f
+                typeface = Typeface.DEFAULT_BOLD
+                maxLines = 1; ellipsize = TextUtils.TruncateAt.END
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            row.addView(TextView(context).apply {
+                text = formatTime(appInfo.lastUsed); setTextColor(BLACK); textSize = baseTinySize
+                setPadding((8 * dp).toInt(), 0, 0, 0)
+            })
+            container.addView(row)
+        }
+        return container
+    }
+
+    /** Bordered first-letter circle used in place of the app icon when icons are hidden. */
+    private fun buildLetterBadge(context: Context, dp: Float, label: String, sizePx: Int): View {
+        val borderW = (BORDER_WIDTH_DP * dp).toInt().coerceAtLeast(1)
+        val bg = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(WHITE); setStroke(borderW, BLACK)
+        }
+        val letter = label.firstOrNull { it.isLetterOrDigit() }?.uppercase() ?: "?"
+        return TextView(context).apply {
+            text = letter
+            setTextColor(BLACK); typeface = Typeface.DEFAULT_BOLD
+            textSize = (sizePx / dp) * 0.42f
+            gravity = Gravity.CENTER
+            background = bg
+            layoutParams = LinearLayout.LayoutParams(sizePx, sizePx).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+            }
+        }
+    }
+
+    /** Launch an app by package name from a recents entry. Dismisses the panel on success. */
+    private fun launchApp(context: Context, pkg: String) {
+        try {
+            val li = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_LAUNCHER)
+                setPackage(pkg)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            val ri = context.packageManager.queryIntentActivities(li, 0).firstOrNull()
+            if (ri != null) {
+                li.setClassName(pkg, ri.activityInfo.name)
+                context.startActivity(li); dismissPanel(); return
+            }
+            val fallback = Intent(Intent.ACTION_MAIN).apply {
+                setPackage(pkg); addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            val fi = context.packageManager.queryIntentActivities(fallback, 0)
+                .firstOrNull { it.activityInfo.exported }
+            if (fi != null) {
+                fallback.setClassName(pkg, fi.activityInfo.name)
+                context.startActivity(fallback); dismissPanel()
+            }
+        } catch (_: Exception) {}
     }
 
     data class RecentAppInfo(val packageName: String, val label: String, val lastUsed: Long)
@@ -1970,11 +2140,13 @@ object OverlayPanelManager {
             orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, pad); background = cardBg
         }
         val headerRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        val iconSize = (28 * dp).toInt()
-        headerRow.addView(ImageView(context).apply {
-            layoutParams = LinearLayout.LayoutParams(iconSize, iconSize).apply { marginEnd = padSmall }
-            try { setImageDrawable(context.packageManager.getApplicationIcon(data.packageName)) } catch (_: Exception) {}
-        })
+        if (!hideAppIcons) {
+            val iconSize = (28 * dp).toInt()
+            headerRow.addView(ImageView(context).apply {
+                layoutParams = LinearLayout.LayoutParams(iconSize, iconSize).apply { marginEnd = padSmall }
+                try { setImageDrawable(context.packageManager.getApplicationIcon(data.packageName)) } catch (_: Exception) {}
+            })
+        }
         headerRow.addView(TextView(context).apply {
             text = data.title; setTextColor(BLACK); textSize = baseTitleSize + 3f; maxLines = 1
             ellipsize = TextUtils.TruncateAt.END; typeface = Typeface.DEFAULT_BOLD
@@ -2223,7 +2395,7 @@ object OverlayPanelManager {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else
                 @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_SYSTEM_ALERT
-            val flash = View(context).apply { setBackgroundColor(BLACK) }
+            val flash = View(context).apply { setBackgroundColor(PURE_BLACK) }
             val params = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,

@@ -32,10 +32,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.core.view.WindowCompat
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -55,10 +54,13 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private val BG = Color.White
-private val FG = Color.Black
-private val CARD_BG = Color.White
-private val BORDER = Color.Black
+// In-app theme — backed by a Compose State so any composable that reads BG/FG/CARD_BG/BORDER
+// is automatically tracked and recomposed when the active theme flips.
+private val darkModeState = mutableStateOf(false)
+private val BG: Color get() = if (darkModeState.value) Color.Black else Color.White
+private val FG: Color get() = if (darkModeState.value) Color.White else Color.Black
+private val CARD_BG: Color get() = BG
+private val BORDER: Color get() = FG
 
 @Composable
 fun KompaktXApp() {
@@ -74,6 +76,7 @@ fun KompaktXApp() {
     val hasUsageAccess = remember(tick) { hasUsageStatsPermission(context) }
     val hasAccessibility = remember(tick) { RecentsButtonService.isRunning }
     val hasBatteryOptExemption = remember(tick) { isIgnoringBatteryOptimizations(context) }
+    val hasWriteSettings = remember(tick) { Settings.System.canWrite(context) }
     val isServiceRunning = remember(tick) { KompaktXListener.isEnabled() }
 
     val headsUpEnabled by prefs.headsUpEnabled.collectAsState(initial = true)
@@ -83,6 +86,35 @@ fun KompaktXApp() {
     val einkControlsEnabled by prefs.einkControlsEnabled.collectAsState(initial = false)
     val hiddenNotiApps by prefs.hiddenNotiApps.collectAsState(initial = emptySet())
     val hiddenRecentApps by prefs.hiddenRecentApps.collectAsState(initial = emptySet())
+    val recentsLayoutMode by prefs.recentsLayoutMode.collectAsState(initial = RecentsLayoutMode.INLINE)
+    val hideAppIcons by prefs.hideAppIcons.collectAsState(initial = false)
+    val themeMode by prefs.themeMode.collectAsState(initial = ThemeMode.SYSTEM)
+    val tabPosition by prefs.tabPosition.collectAsState(initial = TabPosition.TOP)
+
+    // Resolve effective dark state from the theme pref + system uiMode.
+    val systemDark = (context.resources.configuration.uiMode and
+        android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+        android.content.res.Configuration.UI_MODE_NIGHT_YES
+    val isDark = when (themeMode) {
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK -> true
+        else -> systemDark
+    }
+    // Update theme state during composition; reads by BG/FG/etc. will recompose automatically.
+    if (darkModeState.value != isDark) darkModeState.value = isDark
+    // Match system bar icon tint to the active theme so they stay legible.
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = (view.context as? android.app.Activity)?.window ?: return@SideEffect
+            WindowCompat.getInsetsController(window, view)
+                .isAppearanceLightStatusBars = !isDark
+            WindowCompat.getInsetsController(window, view)
+                .isAppearanceLightNavigationBars = !isDark
+        }
+    }
+    LaunchedEffect(isDark) { OverlayPanelManager.darkMode = isDark }
+    LaunchedEffect(tabPosition) { OverlayPanelManager.tabPosition = tabPosition }
 
     // Shortcut assignments
     val shortcutFrontLight by prefs.shortcutFrontLight.collectAsState(initial = ShortcutTrigger.NONE)
@@ -106,9 +138,11 @@ fun KompaktXApp() {
         KompaktXListener.setHiddenNotiApps(hiddenNotiApps)
     }
     LaunchedEffect(hiddenRecentApps) { OverlayPanelManager.hiddenRecentApps = hiddenRecentApps }
+    LaunchedEffect(recentsLayoutMode) { OverlayPanelManager.recentsLayoutMode = recentsLayoutMode }
+    LaunchedEffect(hideAppIcons) { OverlayPanelManager.hideAppIcons = hideAppIcons }
 
     val allPermissionsGranted = hasOverlayPermission && hasNotificationAccess
-    val allFourGranted = allPermissionsGranted && hasUsageAccess && hasAccessibility && hasBatteryOptExemption
+    val allRequiredGranted = allPermissionsGranted && hasUsageAccess && hasAccessibility && hasBatteryOptExemption && hasWriteSettings
 
     LaunchedEffect(allPermissionsGranted) {
         if (allPermissionsGranted) {
@@ -183,7 +217,7 @@ fun KompaktXApp() {
         Spacer(Modifier.height(20.dp))
 
         // Permissions — section and each row hide once granted
-        if (!allFourGranted) {
+        if (!allRequiredGranted) {
             SectionHeader("Permissions")
             SettingsCard {
                 var first = true
@@ -221,6 +255,15 @@ fun KompaktXApp() {
                     PermissionRow("Disable Battery Optimization", "Prevents the system from killing the overlay",
                         Icons.Default.BatteryFull, false
                     ) { requestIgnoreBatteryOptimizations(context) }
+                    first = false
+                }
+                if (!hasWriteSettings) {
+                    if (!first) Divider(color = FG, thickness = 1.dp)
+                    PermissionRow("Modify System Settings", "Required for brightness and custom tones",
+                        Icons.Default.Tune, false
+                    ) { context.startActivity(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
+                        data = android.net.Uri.parse("package:${context.packageName}")
+                    }) }
                 }
             }
             Spacer(Modifier.height(20.dp))
@@ -266,6 +309,18 @@ fun KompaktXApp() {
             ToggleRow("Recent Apps", "Show recently used apps in panel",
                 Icons.Default.Apps, recentAppsEnabled
             ) { scope.launch { prefs.setRecentAppsEnabled(it) } }
+            if (recentAppsEnabled) {
+                Divider(color = FG, thickness = 1.dp)
+                RecentsLayoutPicker(recentsLayoutMode) {
+                    scope.launch { prefs.setRecentsLayoutMode(it) }
+                }
+            }
+            Divider(color = FG, thickness = 1.dp)
+            TabPositionPicker(tabPosition) { scope.launch { prefs.setTabPosition(it) } }
+            Divider(color = FG, thickness = 1.dp)
+            ToggleRow("Hide App Icons", "Hide icons in recents and notifications",
+                Icons.Default.HideImage, hideAppIcons
+            ) { scope.launch { prefs.setHideAppIcons(it) } }
             Divider(color = FG, thickness = 1.dp)
             ToggleRow("E-Ink Controls", if (MeinkController.isAvailable) "Show display mode buttons in panel" else "Not available on this device",
                 Icons.Default.Contrast, einkControlsEnabled
@@ -341,6 +396,37 @@ fun KompaktXApp() {
                             fontWeight = FontWeight.Bold,
                             color = if (isSelected) BG else FG
                         )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        // Theme
+        SectionHeader("Theme")
+        SettingsCard {
+            Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                data class ThemeOpt(val label: String, val mode: Int)
+                val opts = listOf(
+                    ThemeOpt("System", ThemeMode.SYSTEM),
+                    ThemeOpt("Light", ThemeMode.LIGHT),
+                    ThemeOpt("Dark", ThemeMode.DARK)
+                )
+                opts.forEach { opt ->
+                    val isSelected = themeMode == opt.mode
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 4.dp)
+                            .border(2.dp, FG, RoundedCornerShape(8.dp))
+                            .then(if (isSelected) Modifier.background(FG, RoundedCornerShape(8.dp)) else Modifier)
+                            .clickable { scope.launch { prefs.setThemeMode(opt.mode) } }
+                            .padding(vertical = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(opt.label, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                            color = if (isSelected) BG else FG)
                     }
                 }
             }
@@ -591,6 +677,90 @@ private fun ShortcutTriggerOption(label: String, isSelected: Boolean, onClick: (
 }
 
 @Composable
+private fun TabPositionPicker(currentPos: Int, onSelect: (Int) -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.VerticalAlignTop, null, tint = FG, modifier = Modifier.size(24.dp))
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Tab Position", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = FG)
+                Text(
+                    if (currentPos == TabPosition.TOP) "Tabs at the top of the panel"
+                    else "Tabs at the bottom of the panel",
+                    fontSize = 12.sp, color = FG
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+            data class PosOpt(val label: String, val pos: Int)
+            val opts = listOf(
+                PosOpt("Top", TabPosition.TOP),
+                PosOpt("Bottom", TabPosition.BOTTOM)
+            )
+            opts.forEach { opt ->
+                val isSelected = currentPos == opt.pos
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 4.dp)
+                        .border(2.dp, FG, RoundedCornerShape(8.dp))
+                        .then(if (isSelected) Modifier.background(FG, RoundedCornerShape(8.dp)) else Modifier)
+                        .clickable { onSelect(opt.pos) }
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(opt.label, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                        color = if (isSelected) BG else FG)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecentsLayoutPicker(currentMode: Int, onSelect: (Int) -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.ViewCarousel, null, tint = FG, modifier = Modifier.size(24.dp))
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Recents Layout", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = FG)
+                Text(
+                    if (currentMode == RecentsLayoutMode.INLINE) "Inline row at the bottom of the panel"
+                    else "Tabbed list alongside Notifications and Settings",
+                    fontSize = 12.sp, color = FG
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+            data class LayoutOpt(val label: String, val mode: Int)
+            val opts = listOf(
+                LayoutOpt("Inline", RecentsLayoutMode.INLINE),
+                LayoutOpt("Tabbed", RecentsLayoutMode.TABBED)
+            )
+            opts.forEach { opt ->
+                val isSelected = currentMode == opt.mode
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 4.dp)
+                        .border(2.dp, FG, RoundedCornerShape(8.dp))
+                        .then(if (isSelected) Modifier.background(FG, RoundedCornerShape(8.dp)) else Modifier)
+                        .clickable { onSelect(opt.mode) }
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(opt.label, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                        color = if (isSelected) BG else FG)
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun TriggerOption(label: String, mode: Int, currentMode: Int, onClick: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth()
@@ -667,15 +837,6 @@ private fun CustomTonesSection(context: Context) {
     var currentToneName by remember { mutableStateOf("") }
     var playingUri by remember { mutableStateOf<Uri?>(null) }
     var showTones by remember { mutableStateOf(false) }
-    var hasWriteSettings by remember { mutableStateOf(Settings.System.canWrite(context)) }
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    DisposableEffect(lifecycle) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) hasWriteSettings = Settings.System.canWrite(context)
-        }
-        lifecycle.addObserver(observer)
-        onDispose { lifecycle.removeObserver(observer) }
-    }
 
     // Refresh tone list
     fun refreshTones() {
@@ -722,40 +883,6 @@ private fun CustomTonesSection(context: Context) {
     }
 
     SectionHeader("Custom Tones")
-
-    // Modify System Settings permission row — always visible so user can verify/grant
-    SettingsCard {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable {
-                    context.startActivity(
-                        Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
-                            data = android.net.Uri.parse("package:${context.packageName}")
-                        }
-                    )
-                }
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                if (hasWriteSettings) Icons.Default.CheckCircle else Icons.Default.Warning,
-                null,
-                tint = if (hasWriteSettings) Color(0xFF4CAF50) else Color(0xFFF44336),
-                modifier = Modifier.size(24.dp)
-            )
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text("Modify System Settings", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = FG)
-                Text(
-                    if (hasWriteSettings) "Granted — required to set tones" else "Not granted — tap to enable",
-                    fontSize = 12.sp, color = FG
-                )
-            }
-            Icon(Icons.Default.ChevronRight, null, tint = FG, modifier = Modifier.size(20.dp))
-        }
-    }
-    Spacer(Modifier.height(8.dp))
 
     SettingsCard {
         // Tone type selector

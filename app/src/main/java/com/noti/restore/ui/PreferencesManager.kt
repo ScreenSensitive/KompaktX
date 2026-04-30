@@ -38,6 +38,22 @@ object ShortcutTrigger {
     val ALL = intArrayOf(LONG_PRESS_RECENTS, DOUBLE_TAP_RECENTS, LONG_PRESS_BACK)
 }
 
+object RecentsLayoutMode {
+    const val INLINE = 0
+    const val TABBED = 1
+}
+
+object ThemeMode {
+    const val SYSTEM = 0
+    const val LIGHT = 1
+    const val DARK = 2
+}
+
+object TabPosition {
+    const val TOP = 0
+    const val BOTTOM = 1
+}
+
 class PreferencesManager(private val context: Context) {
 
     companion object {
@@ -59,6 +75,10 @@ class PreferencesManager(private val context: Context) {
         private val REFRESH_CYCLE_MODE_B = intPreferencesKey("refresh_cycle_mode_b")
         private val VOLUME_LONG_PRESS_MEDIA = booleanPreferencesKey("volume_long_press_media")
         private val SCROLL_AUTO_MODE = booleanPreferencesKey("scroll_auto_mode")
+        private val RECENTS_LAYOUT_MODE = intPreferencesKey("recents_layout_mode")
+        private val HIDE_APP_ICONS = booleanPreferencesKey("hide_app_icons")
+        private val THEME_MODE = intPreferencesKey("theme_mode")
+        private val TAB_POSITION = intPreferencesKey("tab_position")
 
         @Volatile
         private var instance: PreferencesManager? = null
@@ -86,6 +106,10 @@ class PreferencesManager(private val context: Context) {
     val refreshCycleModeB: Flow<Int> = context.dataStore.data.map { it[REFRESH_CYCLE_MODE_B] ?: 2 } // default Speed
     val volumeLongPressMedia: Flow<Boolean> = context.dataStore.data.map { it[VOLUME_LONG_PRESS_MEDIA] ?: false }
     val scrollAutoMode: Flow<Boolean> = context.dataStore.data.map { it[SCROLL_AUTO_MODE] ?: false }
+    val recentsLayoutMode: Flow<Int> = context.dataStore.data.map { it[RECENTS_LAYOUT_MODE] ?: RecentsLayoutMode.INLINE }
+    val hideAppIcons: Flow<Boolean> = context.dataStore.data.map { it[HIDE_APP_ICONS] ?: false }
+    val themeMode: Flow<Int> = context.dataStore.data.map { it[THEME_MODE] ?: ThemeMode.SYSTEM }
+    val tabPosition: Flow<Int> = context.dataStore.data.map { it[TAB_POSITION] ?: TabPosition.TOP }
 
     suspend fun setHeadsUpEnabled(enabled: Boolean) { context.dataStore.edit { it[HEADS_UP_ENABLED] = enabled } }
     suspend fun setRecentAppsEnabled(enabled: Boolean) { context.dataStore.edit { it[RECENT_APPS_ENABLED] = enabled } }
@@ -98,6 +122,10 @@ class PreferencesManager(private val context: Context) {
     suspend fun setRefreshCycleModeB(mode: Int) { context.dataStore.edit { it[REFRESH_CYCLE_MODE_B] = mode } }
     suspend fun setVolumeLongPressMedia(enabled: Boolean) { context.dataStore.edit { it[VOLUME_LONG_PRESS_MEDIA] = enabled } }
     suspend fun setScrollAutoMode(enabled: Boolean) { context.dataStore.edit { it[SCROLL_AUTO_MODE] = enabled } }
+    suspend fun setRecentsLayoutMode(mode: Int) { context.dataStore.edit { it[RECENTS_LAYOUT_MODE] = mode } }
+    suspend fun setHideAppIcons(enabled: Boolean) { context.dataStore.edit { it[HIDE_APP_ICONS] = enabled } }
+    suspend fun setThemeMode(mode: Int) { context.dataStore.edit { it[THEME_MODE] = mode } }
+    suspend fun setTabPosition(pos: Int) { context.dataStore.edit { it[TAB_POSITION] = pos } }
 
     /**
      * Assign a trigger to an action. Automatically unassigns that trigger from any other action.
