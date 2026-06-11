@@ -520,6 +520,10 @@ object OverlayPanelManager {
         rightCol.addView(TextView(context).apply {
             text = "\u2715"; setTextColor(BLACK); textSize = baseTitleSize + 4f
             gravity = android.view.Gravity.CENTER
+            // Wider hit target \u2014 Material recommends ~44dp; pad both axes generously.
+            setPadding((14 * dp).toInt(), (10 * dp).toInt(), (14 * dp).toInt(), (10 * dp).toInt())
+            minWidth = (44 * dp).toInt()
+            minHeight = (44 * dp).toInt()
             setOnClickListener { dismissPanel() }
         })
         topBar.addView(rightCol)
@@ -821,10 +825,23 @@ object OverlayPanelManager {
 
         entry.addView(TextView(context).apply {
             setText("\u2715"); setTextColor(BLACK); textSize = baseTitleSize
-            setPadding((8 * dp).toInt(), 0, 0, 0)
+            // Pad to make the per-entry close target easier to hit too.
+            setPadding((12 * dp).toInt(), (8 * dp).toInt(), (4 * dp).toInt(), (8 * dp).toInt())
+            minWidth = (40 * dp).toInt()
             setOnClickListener {
                 KompaktXListener.dismiss(sbn.key)
-                (entry.parent as? ViewGroup)?.removeView(entry)
+                val parent = entry.parent as? ViewGroup ?: return@setOnClickListener
+                val idx = parent.indexOfChild(entry)
+                // Drop the divider that follows the entry (if any) so adjacent dividers
+                // don't visually double up before the next refresh rebuilds the list.
+                // For the last entry, drop the preceding divider instead.
+                val sibling = if (idx + 1 < parent.childCount) parent.getChildAt(idx + 1)
+                    else if (idx > 0) parent.getChildAt(idx - 1)
+                    else null
+                if (sibling != null && sibling.layoutParams.height <= (2 * dp).toInt() + 1) {
+                    parent.removeView(sibling)
+                }
+                parent.removeView(entry)
             }
         })
 
