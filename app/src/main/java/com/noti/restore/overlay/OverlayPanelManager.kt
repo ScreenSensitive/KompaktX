@@ -136,6 +136,13 @@ object OverlayPanelManager {
                 val target = currentBrightnessTarget
                 if (target < 0) return
                 try {
+                    // Don't fight Adaptive Brightness: an external write to SCREEN_BRIGHTNESS
+                    // while the system is in automatic mode (e.g. Settings' own Display screen
+                    // mirroring its live auto-brightness value into this setting) is not KompaktX
+                    // being asked to restore anything — reverting it and re-pinning the overlay
+                    // here would silently undo releaseBrightnessOverride() the moment any such
+                    // write happens, defeating the whole point of that release.
+                    if (isAdaptiveBrightnessOn(context.contentResolver)) return
                     val sys = Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS)
                     if (sys != target) {
                         Settings.System.putInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS, target)
