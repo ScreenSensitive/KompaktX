@@ -129,7 +129,15 @@ object OverlayPanelManager {
         stripContext = context
         loadSavedBrightness(context)
 
-        // Watch for system brightness changes and override with our target
+        // Watch for system brightness changes and adopt them as our new target, so the
+        // stock System UI slider (or any other writer of Settings.System.SCREEN_BRIGHTNESS)
+        // stays in sync with KompaktX's overlay instead of being immediately reverted by it.
+        //
+        // applyBrightness() below sets currentBrightnessTarget *before* writing
+        // Settings.System.SCREEN_BRIGHTNESS, so a change we triggered ourselves always finds
+        // sys == target here and is a no-op. Only a genuinely external write reaches the
+        // branch below, which is what lets this safely distinguish "someone else changed it"
+        // from "we just changed it" without an extra flag.
         brightnessObserver = object : ContentObserver(handler) {
             override fun onChange(selfChange: Boolean) {
                 val target = currentBrightnessTarget
@@ -137,9 +145,15 @@ object OverlayPanelManager {
                 try {
                     val sys = Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS)
                     if (sys != target) {
-                        Settings.System.putInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS, target)
-                        val screenVal = if (target <= 0) 0.001f else target / 255f
+                        currentBrightnessTarget = sys
+                        val screenVal = if (sys <= 0) 0.001f else sys / 255f
+                        // Mirror applyBrightness()'s side effects so the externally-set value
+                        // actually reaches the physical backlight (the overlay's screenBrightness
+                        // param drives it, not Settings.System by itself), persists across a
+                        // KompaktX process restart, and still applies above the lockscreen.
                         applyScreenBrightnessToView(brightnessOverlay, screenVal)
+                        com.noti.restore.service.RecentsButtonService.applyAccessibilityBrightness(screenVal)
+                        saveBrightness(context)
                     }
                 } catch (_: Exception) {}
             }
