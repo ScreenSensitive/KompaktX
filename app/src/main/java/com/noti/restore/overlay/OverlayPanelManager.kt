@@ -64,6 +64,7 @@ object OverlayPanelManager {
     private var touchStripView: View? = null
     private var brightnessOverlay: View? = null  // Persistent full-screen overlay just for screenBrightness
     private var brightnessObserver: ContentObserver? = null  // Watches system brightness changes
+    private var brightnessModeObserver: ContentObserver? = null  // Watches SCREEN_BRIGHTNESS_MODE
     private var panelView: View? = null         // The root FrameLayout attached to WindowManager
     private var panelContentView: ViewGroup? = null  // The inner LinearLayout we swap content in
     private var headsUpView: View? = null
@@ -135,6 +136,13 @@ object OverlayPanelManager {
                 val target = currentBrightnessTarget
                 if (target < 0) return
                 try {
+                    // Don't fight Adaptive Brightness: an external write to SCREEN_BRIGHTNESS
+                    // while the system is in automatic mode (e.g. Settings' own Display screen
+                    // mirroring its live auto-brightness value into this setting) is not KompaktX
+                    // being asked to restore anything — reverting it and re-pinning the overlay
+                    // here would silently undo releaseBrightnessOverride() the moment any such
+                    // write happens, defeating the whole point of that release.
+                    if (isAdaptiveBrightnessOn(context.contentResolver)) return
                     val sys = Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS)
                     if (sys != target) {
                         Settings.System.putInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS, target)
@@ -147,6 +155,24 @@ object OverlayPanelManager {
         context.contentResolver.registerContentObserver(
             Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS),
             false, brightnessObserver!!
+        )
+
+        // Watch for Adaptive Brightness being turned on and release our static override so the
+        // physical screen actually goes back to responding to the ambient sensor, instead of
+        // staying clamped to whatever brightnessOverlay was last pinned to. Without this, the
+        // Adaptive Brightness *setting* can stay on (per the reapplyBrightness()/
+        // loadSavedBrightness() fix above) while the real backlight never becomes adaptive again,
+        // because nothing else ever releases the overlay's screenBrightness override.
+        brightnessModeObserver = object : ContentObserver(handler) {
+            override fun onChange(selfChange: Boolean) {
+                if (isAdaptiveBrightnessOn(context.contentResolver)) {
+                    releaseBrightnessOverride()
+                }
+            }
+        }
+        context.contentResolver.registerContentObserver(
+            Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS_MODE),
+            false, brightnessModeObserver!!
         )
 
         windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -236,6 +262,10 @@ object OverlayPanelManager {
             try { stripContext?.contentResolver?.unregisterContentObserver(obs) } catch (_: Exception) {}
         }
         brightnessObserver = null
+        brightnessModeObserver?.let { obs ->
+            try { stripContext?.contentResolver?.unregisterContentObserver(obs) } catch (_: Exception) {}
+        }
+        brightnessModeObserver = null
     }
 
     fun recreateTouchStrip() {
@@ -856,9 +886,10 @@ object OverlayPanelManager {
         val sp = context.getSharedPreferences("kompaktx_brightness", Context.MODE_PRIVATE)
         lastManualBrightness = sp.getInt("last_manual_brightness", 128)
         currentBrightnessTarget = sp.getInt("current_brightness_target", -1)
-        // If we have a saved target, apply it immediately
+        // If we have a saved target, apply it immediately — passively, without forcing manual
+        // brightness mode, since this isn't a user gesture (see applyBrightness's kdoc).
         if (currentBrightnessTarget >= 0) {
-            applyBrightness(context.contentResolver, currentBrightnessTarget)
+            applyBrightness(context.contentResolver, currentBrightnessTarget, forceManualMode = false)
         }
     }
 
@@ -2295,11 +2326,37 @@ object OverlayPanelManager {
 
     // ─── Helpers ────────────────────────────────────────────────────
 
-    private fun applyBrightness(resolver: android.content.ContentResolver, brightness: Int) {
+    /**
+     * @param forceManualMode Whether to also flip the system into manual brightness mode.
+     * True for a direct user gesture (slider drag, sun-icon tap, front-light toggle) — matching
+     * stock Android's own "dragging the brightness slider disables Adaptive Brightness" behavior.
+     * False for a passive reapplication of an already-saved target (screen wake, service
+     * restart) — those aren't the user touching a brightness control, so they must not silently
+     * override an Adaptive Brightness setting the user may have turned back on since. When false
+     * and Adaptive Brightness currently reads as on, this also skips writing Settings.System and
+     * pinning the overlay entirely — see releaseBrightnessOverride() — so a passive reapply never
+     * re-clamps the physical screen to a stale value while the OS is meant to be driving it.
+     */
+    private fun applyBrightness(
+        resolver: android.content.ContentResolver,
+        brightness: Int,
+        forceManualMode: Boolean = true
+    ) {
         currentBrightnessTarget = brightness
+        if (!forceManualMode && isAdaptiveBrightnessOn(resolver)) {
+            // Remember the target (in memory and in SharedPreferences) so the next real user
+            // gesture picks up where things left off, but leave Settings.System and the overlay
+            // alone — the OS's own auto-brightness curve should be the one driving the physical
+            // screen right now, not a stale value from before the user turned Adaptive
+            // Brightness back on.
+            saveBrightness(stripContext)
+            return
+        }
         try {
-            Settings.System.putInt(resolver, Settings.System.SCREEN_BRIGHTNESS_MODE,
-                Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
+            if (forceManualMode) {
+                Settings.System.putInt(resolver, Settings.System.SCREEN_BRIGHTNESS_MODE,
+                    Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
+            }
             Settings.System.putInt(resolver, Settings.System.SCREEN_BRIGHTNESS, brightness)
         } catch (_: Exception) {}
         val screenVal = if (brightness <= 0) 0.001f else brightness / 255f
@@ -2319,12 +2376,36 @@ object OverlayPanelManager {
         } catch (_: Exception) {}
     }
 
+    /** True when the system's own Adaptive Brightness is currently on. */
+    private fun isAdaptiveBrightnessOn(resolver: android.content.ContentResolver): Boolean {
+        return try {
+            Settings.System.getInt(resolver, Settings.System.SCREEN_BRIGHTNESS_MODE) ==
+                Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC
+        } catch (_: Exception) { false }
+    }
+
+    /**
+     * Release every KompaktX-held brightness override (the persistent overlay, the panel window
+     * if it happens to be open, and the lockscreen accessibility overlay) so the physical screen
+     * goes back to being driven by the OS's own Adaptive Brightness. currentBrightnessTarget is
+     * left untouched — it's what a real user gesture resumes from later.
+     */
+    private fun releaseBrightnessOverride() {
+        applyScreenBrightnessToView(panelView, -1f)
+        applyScreenBrightnessToView(brightnessOverlay, -1f)
+        com.noti.restore.service.RecentsButtonService.clearAccessibilityBrightness()
+    }
+
     /** Re-apply our brightness target after screen wake. Forces both Settings.System and overlay. */
     fun reapplyBrightness() {
         val ctx = stripContext ?: return
         val target = currentBrightnessTarget
         if (target < 0) return
-        handler.post { applyBrightness(ctx.contentResolver, target) }
+        // Fires on every screen wake and accessibility-service reconnect — not a user gesture,
+        // so don't force manual brightness mode here (see applyBrightness's kdoc). This was
+        // previously the main reason Adaptive Brightness appeared broken while KompaktX was
+        // installed: every wake silently flipped the system back to manual.
+        handler.post { applyBrightness(ctx.contentResolver, target, forceManualMode = false) }
     }
 
     /** Update the live brightness slider/icon UI if the panel is currently open. */
