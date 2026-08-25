@@ -1071,12 +1071,6 @@ object OverlayPanelManager {
             Settings.System.getInt(resolver, Settings.System.SCREEN_BRIGHTNESS)
         } catch (_: Exception) { 128 }
 
-        // Ensure manual brightness mode
-        try {
-            Settings.System.putInt(resolver, Settings.System.SCREEN_BRIGHTNESS_MODE,
-                Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
-        } catch (_: Exception) {}
-
         val trackH = (6 * dp).toInt()
         val thumbSize = (24 * dp).toInt()
 
@@ -1154,6 +1148,10 @@ object OverlayPanelManager {
                     val frac = ((event.x - thumbSize / 2) / (v.width - thumbSize)).coerceIn(0f, 1f)
                     val brightness = (frac * 255).toInt().coerceIn(1, 255)
                     try {
+                        // Force manual mode here, on an actual drag, not just from opening this
+                        // sub-panel — matches stock Android's own slider-drag behavior.
+                        Settings.System.putInt(resolver, Settings.System.SCREEN_BRIGHTNESS_MODE,
+                            Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
                         Settings.System.putInt(resolver, Settings.System.SCREEN_BRIGHTNESS, brightness)
                     } catch (_: Exception) {}
                     updateSliderVisual(brightness, v.width)
@@ -1508,10 +1506,9 @@ object OverlayPanelManager {
         val currentBrightness = try {
             Settings.System.getInt(resolver, Settings.System.SCREEN_BRIGHTNESS)
         } catch (_: Exception) { 128 }
-        try {
-            Settings.System.putInt(resolver, Settings.System.SCREEN_BRIGHTNESS_MODE,
-                Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
-        } catch (_: Exception) {}
+        // Manual mode is forced from applyBrightness() below, on an actual slider drag or
+        // sun-icon tap — not here, just from building this section's view. Merely viewing the
+        // Quick Settings tab shouldn't disable Adaptive Brightness on its own.
 
         // Percentage label on right (declare early so sun icon click can update it)
         val valueText = TextView(context).apply {
