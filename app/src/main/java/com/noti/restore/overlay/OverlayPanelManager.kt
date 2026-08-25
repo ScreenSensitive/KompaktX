@@ -143,6 +143,13 @@ object OverlayPanelManager {
                 val target = currentBrightnessTarget
                 if (target < 0) return
                 try {
+                    // Don't fight Adaptive Brightness: an external write to SCREEN_BRIGHTNESS
+                    // while the system is in automatic mode (e.g. Settings' own Display screen
+                    // mirroring its live auto-brightness value into this setting) is not KompaktX
+                    // being asked to sync anything — adopting it as a new target and pinning the
+                    // overlay to it here would fight Adaptive Brightness the same way reverting
+                    // did before this branch, just with a different stale-ish value.
+                    if (isAdaptiveBrightnessOn(context.contentResolver)) return
                     val sys = Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS)
                     if (sys != target) {
                         currentBrightnessTarget = sys
@@ -2331,6 +2338,14 @@ object OverlayPanelManager {
             lp.screenBrightness = brightness
             windowManager?.updateViewLayout(view, lp)
         } catch (_: Exception) {}
+    }
+
+    /** True when the system's own Adaptive Brightness is currently on. */
+    private fun isAdaptiveBrightnessOn(resolver: android.content.ContentResolver): Boolean {
+        return try {
+            Settings.System.getInt(resolver, Settings.System.SCREEN_BRIGHTNESS_MODE) ==
+                Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC
+        } catch (_: Exception) { false }
     }
 
     /** Re-apply our brightness target after screen wake. Forces both Settings.System and overlay. */
