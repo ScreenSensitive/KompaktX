@@ -110,6 +110,13 @@ object OverlayPanelManager {
     // Fallback heights in dp (only used if measurement fails)
     private const val PAGE_NAV_HEIGHT_DP = 44f
 
+    /**
+     * How long after a wake / service reconnect a nonzero SCREEN_BRIGHTNESS is still attributed to
+     * the OS restoring brightness itself rather than to the user changing it elsewhere. Generous
+     * because the Kompakt's e-ink pipeline settles slowly after a wake.
+     */
+    private const val WAKE_RESTORE_GRACE_MS = 3000L
+
     // Current context for recreating strip
     private var stripContext: Context? = null
 
@@ -881,6 +888,37 @@ object OverlayPanelManager {
     private var flashlightOn = false
     private var lastManualBrightness = 128  // saved brightness for sun icon toggle
     private var lastAppliedOverride = Float.NaN  // last screenBrightness pushed to our windows
+    /**
+     * Whether the user has turned the front light fully off.
+     *
+     * Off has to be tracked as intent rather than read back from Settings.System, because the OS
+     * does not preserve it: SCREEN_BRIGHTNESS accepts 0 while the screen is off, but the display
+     * power controller rewrites a nonzero value of its own on the next wake (verified on the
+     * Kompakt: write 0 -> sleep -> wake leaves the setting at 1). A pure mirror therefore reads
+     * that value back on unlock and dutifully lights the panel again, which is exactly the
+     * "off resets itself after unlocking" bug.
+     *
+     * What actually holds the panel dark is our sub-minimum window override, which the OS does not
+     * touch. This flag is what tells the mirror pass to keep asserting it.
+     */
+    private var frontLightOff = false
+
+    /**
+     * When [reapplyBrightness] last ran, i.e. the last screen-on / service-reconnect. Used to tell
+     * the OS's own wake-time brightness restore apart from a person deliberately changing
+     * brightness in another app: the former always lands within a moment of a wake, the latter
+     * arrives while the device is simply awake.
+     */
+    private var lastWakeAssertAt = 0L
+
+    /** Whether the front light is currently off from the user's point of view. */
+    private val isFrontLightOff: Boolean get() = frontLightOff
+
+    /**
+     * Brightness to restore when the front light is toggled back on. Ignores the current system
+     * value while off, since that is the clamped floor rather than anything the user chose.
+     */
+    private fun frontLightRestoreValue(): Int = lastManualBrightness.coerceAtLeast(10)
     private var currentBrightnessTarget = -1  // tracks what brightness we last set (-1 = not managed)
 
     // Live references to brightness UI elements (set when panel is open, cleared on close)
@@ -897,6 +935,7 @@ object OverlayPanelManager {
         val sp = context.getSharedPreferences("kompaktx_brightness", Context.MODE_PRIVATE)
         lastManualBrightness = sp.getInt("last_manual_brightness", 128)
         currentBrightnessTarget = sp.getInt("current_brightness_target", -1)
+        frontLightOff = sp.getBoolean("front_light_off", false)
         // Service (re)start is not a user gesture, so mirror the system's current state rather
         // than replaying a saved value — replaying it here is what used to silently flip Adaptive
         // Brightness back off every time the touch-strip service came up.
@@ -910,6 +949,7 @@ object OverlayPanelManager {
             sp.edit()
                 .putInt("last_manual_brightness", lastManualBrightness)
                 .putInt("current_brightness_target", currentBrightnessTarget)
+                .putBoolean("front_light_off", frontLightOff)
                 .apply()
         } catch (_: Exception) {}
     }
@@ -1108,7 +1148,9 @@ object OverlayPanelManager {
         }
 
         val resolver = context.contentResolver
-        val currentBrightness = try {
+        // Report 0 while the front light is off: Settings.System holds the device's nonzero
+        // floor in that state, which would otherwise render as a few percent instead of "Off".
+        val currentBrightness = if (isFrontLightOff) 0 else try {
             Settings.System.getInt(resolver, Settings.System.SCREEN_BRIGHTNESS)
         } catch (_: Exception) { 128 }
 
@@ -1545,7 +1587,9 @@ object OverlayPanelManager {
             setPadding(0, (6 * dp).toInt(), 0, (6 * dp).toInt())
         }
         val resolver = context.contentResolver
-        val currentBrightness = try {
+        // Report 0 while the front light is off: Settings.System holds the device's nonzero
+        // floor in that state, which would otherwise render as a few percent instead of "Off".
+        val currentBrightness = if (isFrontLightOff) 0 else try {
             Settings.System.getInt(resolver, Settings.System.SCREEN_BRIGHTNESS)
         } catch (_: Exception) { 128 }
         // No mode-forcing here: merely opening the panel to look at the slider must not turn
@@ -1642,15 +1686,14 @@ object OverlayPanelManager {
             }
         }
         sunIcon.setOnClickListener {
-            val current = try {
-                Settings.System.getInt(resolver, Settings.System.SCREEN_BRIGHTNESS)
-            } catch (_: Exception) { 0 }
-            val target = if (current > 0) {
-                lastManualBrightness = current  // save before turning off
-                saveBrightness(context)
-                0
+            val target = if (isFrontLightOff) {
+                frontLightRestoreValue()
             } else {
-                lastManualBrightness.coerceAtLeast(10)  // restore, min 10 so it's visible
+                val current = try {
+                    Settings.System.getInt(resolver, Settings.System.SCREEN_BRIGHTNESS)
+                } catch (_: Exception) { 0 }
+                if (current > 0) { lastManualBrightness = current; saveBrightness(context) }
+                0
             }
             setManualBrightness(resolver, target)
             if (sliderContainer.width > 0) updateSlider(target, sliderContainer.width)
@@ -2351,6 +2394,7 @@ object OverlayPanelManager {
                 Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
             Settings.System.putInt(resolver, Settings.System.SCREEN_BRIGHTNESS, clamped)
         } catch (_: Exception) {}
+        frontLightOff = clamped <= 0
         saveBrightness(stripContext)
         // Push it to the physical screen now rather than waiting for the observer, so a drag
         // feels immediate; the observer callback that follows is idempotent and costs nothing.
@@ -2375,12 +2419,41 @@ object OverlayPanelManager {
     private fun syncBrightnessOverrides(context: Context, force: Boolean = false) {
         val resolver = context.contentResolver
         if (isAdaptiveBrightnessOn(resolver)) {
+            // The OS owns the backlight now, which necessarily ends an "off" state.
+            if (frontLightOff) {
+                frontLightOff = false
+                saveBrightness(context)
+            }
             applyOverrideToAllSurfaces(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE, force)
             return
         }
         val sys = try {
             Settings.System.getInt(resolver, Settings.System.SCREEN_BRIGHTNESS)
         } catch (_: Exception) { return }
+
+        if (frontLightOff) {
+            val nearWake =
+                android.os.SystemClock.uptimeMillis() - lastWakeAssertAt < WAKE_RESTORE_GRACE_MS
+            if (sys <= 0 || force || nearWake) {
+                // Still off. Either the setting already agrees with us, or this is a wake/reconnect
+                // pass where a nonzero value is the OS's own restore rather than anything the user
+                // asked for. Re-publish the intent so other apps' brightness UIs keep showing off,
+                // and keep the sub-minimum override that is what actually darkens the panel.
+                if (sys > 0) {
+                    try {
+                        Settings.System.putInt(resolver, Settings.System.SCREEN_BRIGHTNESS, 0)
+                    } catch (_: Exception) {}
+                }
+                currentBrightnessTarget = 0
+                applyOverrideToAllSurfaces(0.001f, force)
+                return
+            }
+            // Awake, and something raised the brightness well after the wake settled — a real
+            // external change (stock slider, another app). The user wants light again.
+            frontLightOff = false
+            saveBrightness(context)
+        }
+
         // Adopt the system value as our own, so the sun-icon toggle and a later re-apply resume
         // from what the user last saw rather than from a stale KompaktX-internal number. Only
         // persist when it actually moved — this runs on every drag event via the observer.
@@ -2443,6 +2516,9 @@ object OverlayPanelManager {
      */
     fun reapplyBrightness() {
         val ctx = stripContext ?: return
+        // Stamp before posting: the OS's wake-time brightness restore can land either side of this
+        // runnable, and the grace window has to cover both.
+        lastWakeAssertAt = android.os.SystemClock.uptimeMillis()
         handler.post { syncBrightnessOverrides(ctx, force = true) }
     }
 
@@ -2478,15 +2554,14 @@ object OverlayPanelManager {
     fun toggleFrontLight(context: Context) {
         val resolver = context.contentResolver
         // Mode-forcing lives in setManualBrightness() below — no need to write it twice here.
-        val current = try {
-            Settings.System.getInt(resolver, Settings.System.SCREEN_BRIGHTNESS)
-        } catch (_: Exception) { 0 }
-        val target = if (current > 0) {
-            lastManualBrightness = current
-            saveBrightness(context)
-            0
+        val target = if (isFrontLightOff) {
+            frontLightRestoreValue()
         } else {
-            lastManualBrightness.coerceAtLeast(10)
+            val current = try {
+                Settings.System.getInt(resolver, Settings.System.SCREEN_BRIGHTNESS)
+            } catch (_: Exception) { 0 }
+            if (current > 0) { lastManualBrightness = current; saveBrightness(context) }
+            0
         }
         setManualBrightness(resolver, target)
         updateBrightnessUI(target)
