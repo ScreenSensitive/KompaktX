@@ -400,7 +400,18 @@ class RecentsButtonService : AccessibilityService() {
     private fun performRecentsSingleTap() {
         if (OverlayPanelManager.triggerMode == TriggerMode.RECENTS_BUTTON) {
             OverlayPanelManager.togglePanelFromService(this)
-        } else {
+            return
+        }
+        // Issue #2: assigning ANY Recents shortcut makes onKeyEvent() route every APP_SWITCH
+        // through handleRecentsAdvanced(), which always consumes the event — so the stock button
+        // behaviour has to be reproduced here. It used to call GLOBAL_ACTION_RECENTS, but the
+        // Kompakt ships no overview/recents screen at all (dumpsys reports mRecentsComponent=null,
+        // which is also why KompaktX builds its own recents list from UsageStats). That made the
+        // call a silent no-op and the button appear dead the moment a shortcut was assigned.
+        //
+        // The Kompakt's Control Center is the system notification shade, so open that instead,
+        // and only fall back to the overview action on a device that actually has one.
+        if (!performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)) {
             performGlobalAction(GLOBAL_ACTION_RECENTS)
         }
     }

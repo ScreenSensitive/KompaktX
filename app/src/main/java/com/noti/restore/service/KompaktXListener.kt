@@ -16,6 +16,7 @@ import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import com.noti.restore.overlay.OverlayPanelManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -226,10 +227,7 @@ class KompaktXListener : NotificationListenerService() {
             extras.getString(Notification.EXTRA_TITLE)
                 ?: extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
         } catch (_: Exception) { "" }
-        val text = try {
-            extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
-                ?: extras.getString(Notification.EXTRA_TEXT) ?: ""
-        } catch (_: Exception) { "" }
+        val text = latestMessageText(notification, extras)
         val actions = try {
             notification.actions?.mapNotNull { action ->
                 try {
@@ -272,6 +270,41 @@ class KompaktXListener : NotificationListenerService() {
 
     companion object {
         private var instance: KompaktXListener? = null
+
+        /**
+         * Newest human-readable line of a notification (issue #3).
+         *
+         * Messaging apps that group a thread into one notification keep the running history in
+         * MessagingStyle's message list (or InboxStyle's text lines) and frequently leave the
+         * plain EXTRA_TEXT fallback set to whatever arrived *first*. Reading EXTRA_TEXT alone is
+         * why a new SMS pop-up could show the oldest unread message instead of the one that just
+         * landed. Prefer the newest structured entry, and only fall back to EXTRA_TEXT when a
+         * notification carries no message history at all.
+         */
+        fun latestMessageText(notification: Notification, extras: Bundle): String {
+            try {
+                val messages = NotificationCompat.MessagingStyle
+                    .extractMessagingStyleFromNotification(notification)?.messages
+                if (!messages.isNullOrEmpty()) {
+                    // Ordered oldest -> newest by contract, but sort defensively: some senders
+                    // rebuild the list out of order when re-posting a thread.
+                    val newest = messages.maxByOrNull { it.timestamp } ?: messages.last()
+                    val t = newest.text?.toString()
+                    if (!t.isNullOrBlank()) return t
+                }
+            } catch (_: Exception) {}
+            try {
+                val lines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+                if (lines != null && lines.isNotEmpty()) {
+                    val t = lines.last()?.toString()
+                    if (!t.isNullOrBlank()) return t
+                }
+            } catch (_: Exception) {}
+            return try {
+                extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+                    ?: extras.getString(Notification.EXTRA_TEXT) ?: ""
+            } catch (_: Exception) { "" }
+        }
 
         private val _notifications = MutableStateFlow<List<StatusBarNotification>>(emptyList())
         val notifications: StateFlow<List<StatusBarNotification>> = _notifications.asStateFlow()

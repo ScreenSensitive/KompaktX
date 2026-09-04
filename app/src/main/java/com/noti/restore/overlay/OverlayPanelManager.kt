@@ -492,7 +492,10 @@ object OverlayPanelManager {
         val dateStr = android.text.format.DateFormat.format("dd", now).toString()
         val monthYear = android.text.format.DateFormat.format("MMMM yyyy", now).toString()
         val dayOfWeek = android.text.format.DateFormat.format("EEEE", now).toString()
-        val timeStr = android.text.format.DateFormat.format("h:mm a", now).toString()
+        // Follow the system's 12/24-hour setting rather than hardcoding 12-hour (issue #1).
+        // getTimeFormat() resolves to the user's locale + "Use 24-hour format" preference, which
+        // yields zero-padded 24-hour time (ISO-style) when that setting is on.
+        val timeStr = android.text.format.DateFormat.getTimeFormat(context).format(now.time)
         val batteryIntent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         val batteryLevel = batteryIntent?.let {
             val lvl = it.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
@@ -792,7 +795,9 @@ object OverlayPanelManager {
     private fun buildNotificationEntry(context: Context, dp: Float, sbn: StatusBarNotification): View {
         val extras = sbn.notification.extras
         val nTitle = extras.getString("android.title") ?: ""
-        val nText = extras.getCharSequence("android.text")?.toString() ?: ""
+        // Same newest-message extraction the heads-up pop-up uses, so a grouped SMS thread shows
+        // the message that just arrived here in the tray too, not the oldest unread one.
+        val nText = KompaktXListener.latestMessageText(sbn.notification, extras)
         val postTime = sbn.postTime
         val appName = try {
             val appInfo = context.packageManager.getApplicationInfo(sbn.packageName, 0)
