@@ -635,10 +635,10 @@ object OverlayPanelManager {
                 setTextColor(if (selected) WHITE else BLACK)
                 textSize = baseSmallSize; typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER; background = tabBg
-                // ~44dp touch target, matching the close buttons. The pill background is fully
-                // rounded, so the extra height reads as a taller pill rather than a bigger box.
-                setPadding((16 * dp).toInt(), (8 * dp).toInt(), (16 * dp).toInt(), (8 * dp).toInt())
-                minHeight = (44 * dp).toInt()
+                // Same vertical padding as the WiFi/Bluetooth/Flashlight pills in the settings
+                // grid, so the two sets of pill controls read as one family. A forced 44dp box
+                // made these noticeably chunkier than those toggles.
+                setPadding((16 * dp).toInt(), (10 * dp).toInt(), (16 * dp).toInt(), (10 * dp).toInt())
                 setOnClickListener {
                     if (panelTab != tabId) { panelTab = tabId; buildAndShowPanel(context) }
                 }
@@ -739,6 +739,7 @@ object OverlayPanelManager {
                 }
                 settingsContent.addView(buildSettingsGrid(context, dp, borderW))
                 settingsContent.addView(buildBrightnessSection(context, dp))
+                settingsContent.addView(buildAdaptiveBrightnessToggle(context, dp, borderW))
                 if (MeinkController.isAvailable) {
                     settingsContent.addView(buildRefreshModeCircles(context, dp, borderW))
                 }
@@ -1728,6 +1729,67 @@ object OverlayPanelManager {
         row.addView(sunIcon)
         row.addView(sliderContainer)
         row.addView(valueText)
+        return row
+    }
+
+    /**
+     * "Auto" pill that toggles the system's Adaptive Brightness, styled to match the
+     * WiFi/Bluetooth/Flashlight toggles.
+     *
+     * Only writes SCREEN_BRIGHTNESS_MODE. Everything that follows — releasing our window override
+     * so the OS's ambient curve can drive the panel, or reclaiming it when switching back to
+     * manual — is handled by the mode ContentObserver landing in syncBrightnessOverrides().
+     *
+     * Dragging the brightness slider while this is on still switches back to manual, matching what
+     * stock Android does when you drag its slider.
+     */
+    private fun buildAdaptiveBrightnessToggle(context: Context, dp: Float, borderW: Int): View {
+        val resolver = context.contentResolver
+        val row = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, (2 * dp).toInt(), 0, (6 * dp).toInt())
+        }
+
+        fun bgFor(on: Boolean) = GradientDrawable().apply {
+            cornerRadius = 12 * dp
+            if (on) setColor(BLACK) else { setColor(WHITE); setStroke(borderW, BLACK) }
+        }
+
+        val startOn = isAdaptiveBrightnessOn(resolver)
+        val label = TextView(context).apply {
+            text = "Auto"
+            setTextColor(if (startOn) WHITE else BLACK)
+            textSize = baseSmallSize; typeface = Typeface.DEFAULT_BOLD
+        }
+        val pill = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
+            background = bgFor(startOn)
+            setPadding((14 * dp).toInt(), (10 * dp).toInt(), (14 * dp).toInt(), (10 * dp).toInt())
+            setOnClickListener {
+                val turningOn = !isAdaptiveBrightnessOn(resolver)
+                try {
+                    Settings.System.putInt(
+                        resolver, Settings.System.SCREEN_BRIGHTNESS_MODE,
+                        if (turningOn) Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC
+                        else Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL
+                    )
+                } catch (_: Exception) {}
+                // Re-read rather than trusting the write: without WRITE_SETTINGS granted it is a
+                // no-op, and the pill must not claim a state the system didn't take.
+                val nowOn = isAdaptiveBrightnessOn(resolver)
+                background = bgFor(nowOn)
+                label.setTextColor(if (nowOn) WHITE else BLACK)
+                syncBrightnessOverrides(context, force = true)
+            }
+        }
+        pill.addView(label)
+
+        row.addView(TextView(context).apply {
+            text = "Adaptive brightness"
+            setTextColor(BLACK); textSize = baseSmallSize
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        row.addView(pill)
         return row
     }
 
