@@ -20,10 +20,15 @@ class OverlayService : Service() {
         private const val NOTIFICATION_ID = 1001
     }
 
-    private val screenOnReceiver = object : BroadcastReceiver() {
+    private val screenStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == Intent.ACTION_SCREEN_ON) {
-                OverlayPanelManager.reapplyBrightness()
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_ON -> OverlayPanelManager.reapplyBrightness()
+                // Arm the wake-restore guard as the screen goes OFF, not when it comes back on.
+                // The OS rewrites SCREEN_BRIGHTNESS while turning the display on, and that write
+                // reaches our ContentObserver before the SCREEN_ON broadcast reaches us — so
+                // anything armed on SCREEN_ON is already too late. See onScreenOff().
+                Intent.ACTION_SCREEN_OFF -> OverlayPanelManager.onScreenOff()
             }
         }
     }
@@ -34,7 +39,10 @@ class OverlayService : Service() {
         startForeground(NOTIFICATION_ID, buildNotification())
         MeinkController.init()
         OverlayPanelManager.createTouchStrip(this)
-        registerReceiver(screenOnReceiver, IntentFilter(Intent.ACTION_SCREEN_ON))
+        registerReceiver(screenStateReceiver, IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_SCREEN_OFF)
+        })
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -43,7 +51,7 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        try { unregisterReceiver(screenOnReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(screenStateReceiver) } catch (_: Exception) {}
         OverlayPanelManager.removeTouchStrip()
     }
 

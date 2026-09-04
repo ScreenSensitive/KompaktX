@@ -904,12 +904,17 @@ object OverlayPanelManager {
     private var frontLightOff = false
 
     /**
-     * When [reapplyBrightness] last ran, i.e. the last screen-on / service-reconnect. Used to tell
-     * the OS's own wake-time brightness restore apart from a person deliberately changing
-     * brightness in another app: the former always lands within a moment of a wake, the latter
-     * arrives while the device is simply awake.
+     * True from the moment the screen goes off until shortly after it comes back on.
+     *
+     * This is how the OS's own wake-time brightness restore is told apart from a person changing
+     * brightness in another app. The OS does not clamp our 0 to a floor — it discards it and
+     * writes back the last nonzero brightness instead (verified on device: 100 -> 0 -> sleep ->
+     * wake leaves the setting at 100). So there is no value we could recognise it by; only its
+     * timing gives it away, and it lands before the SCREEN_ON broadcast arrives. Arming this while
+     * the screen switches off is the only point that reliably precedes it.
      */
-    private var lastWakeAssertAt = 0L
+    private var pendingWakeRestore = false
+    private var clearWakeRestoreRunnable: Runnable? = null
 
     /** Whether the front light is currently off from the user's point of view. */
     private val isFrontLightOff: Boolean get() = frontLightOff
@@ -2202,9 +2207,26 @@ object OverlayPanelManager {
                 ).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; y = 0 }
                 headsUpParams = layoutParams
                 view.setOnTouchListener(createHeadsUpTouchListener(context, data))
-                // Prefer TYPE_ACCESSIBILITY_OVERLAY (draws above status bar); fall back to normal overlay
-                headsUpUsingAccessibility = com.noti.restore.service.RecentsButtonService.addHeadsUp(view, layoutParams)
-                if (!headsUpUsingAccessibility) windowManager?.addView(view, layoutParams)
+                // Prefer TYPE_ACCESSIBILITY_OVERLAY, which is the only one of the two window types
+                // that draws *above* the status bar.
+                headsUpUsingAccessibility =
+                    com.noti.restore.service.RecentsButtonService.addHeadsUp(view, layoutParams)
+                if (!headsUpUsingAccessibility) {
+                    // Fallback path, taken whenever the accessibility service isn't connected —
+                    // not yet enabled, killed and awaiting restart, or restarting after an update.
+                    // A plain overlay is layered BENEATH the status bar, so at y = 0 with
+                    // FLAG_LAYOUT_NO_LIMITS the pop-up renders behind it and looks clipped or
+                    // missing. This is why the problem appears random across users and can "fix
+                    // itself": it tracks the accessibility service's connection state, not the
+                    // notification. Push the pop-up below the status bar instead.
+                    //
+                    // addHeadsUp() may also have already switched the shared params over to the
+                    // accessibility type before failing, which a non-accessibility window cannot
+                    // use — so put the type back before retrying here.
+                    layoutParams.type = windowType
+                    layoutParams.y = statusBarHeight
+                    windowManager?.addView(view, layoutParams)
+                }
                 startDismissTimer()
             } catch (e: Exception) { Log.e(TAG, "Failed to show heads-up", e) }
         }
@@ -2425,6 +2447,14 @@ object OverlayPanelManager {
                 saveBrightness(context)
             }
             applyOverrideToAllSurfaces(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE, force)
+            // Adaptive brightness moves the system value continuously as ambient light changes.
+            // Track it in an open panel so the slider follows along live, instead of showing
+            // whatever it happened to read when the panel was built.
+            try {
+                updateBrightnessUI(
+                    Settings.System.getInt(resolver, Settings.System.SCREEN_BRIGHTNESS)
+                )
+            } catch (_: Exception) {}
             return
         }
         val sys = try {
@@ -2432,9 +2462,7 @@ object OverlayPanelManager {
         } catch (_: Exception) { return }
 
         if (frontLightOff) {
-            val nearWake =
-                android.os.SystemClock.uptimeMillis() - lastWakeAssertAt < WAKE_RESTORE_GRACE_MS
-            if (sys <= 0 || force || nearWake) {
+            if (sys <= 0 || force || pendingWakeRestore) {
                 // Still off. Either the setting already agrees with us, or this is a wake/reconnect
                 // pass where a nonzero value is the OS's own restore rather than anything the user
                 // asked for. Re-publish the intent so other apps' brightness UIs keep showing off,
@@ -2463,6 +2491,9 @@ object OverlayPanelManager {
             saveBrightness(context)
         }
         applyOverrideToAllSurfaces(if (sys <= 0) 0.001f else sys / 255f, force)
+        // Keep an open panel's slider in step with whoever changed the brightness — the stock
+        // System UI slider, another app, or our own sub-panel.
+        updateBrightnessUI(sys)
     }
 
     /**
@@ -2516,10 +2547,27 @@ object OverlayPanelManager {
      */
     fun reapplyBrightness() {
         val ctx = stripContext ?: return
-        // Stamp before posting: the OS's wake-time brightness restore can land either side of this
-        // runnable, and the grace window has to cover both.
-        lastWakeAssertAt = android.os.SystemClock.uptimeMillis()
         handler.post { syncBrightnessOverrides(ctx, force = true) }
+        // Keep attributing brightness writes to the OS for a moment after the screen comes back —
+        // it can write more than once as the display settles — then hand control back to the user.
+        clearWakeRestoreRunnable?.let { handler.removeCallbacks(it) }
+        clearWakeRestoreRunnable = Runnable {
+            pendingWakeRestore = false
+            // One last assert once things have settled, in case a late OS write slipped through.
+            stripContext?.let { syncBrightnessOverrides(it, force = true) }
+        }
+        handler.postDelayed(clearWakeRestoreRunnable!!, WAKE_RESTORE_GRACE_MS)
+    }
+
+    /**
+     * Screen turned off. Arms the wake-restore guard — see [pendingWakeRestore]. Must be driven by
+     * ACTION_SCREEN_OFF rather than ACTION_SCREEN_ON, because the OS's brightness restore beats
+     * the SCREEN_ON broadcast to us.
+     */
+    fun onScreenOff() {
+        clearWakeRestoreRunnable?.let { handler.removeCallbacks(it) }
+        clearWakeRestoreRunnable = null
+        pendingWakeRestore = true
     }
 
     /** Update the live brightness slider/icon UI if the panel is currently open. */
