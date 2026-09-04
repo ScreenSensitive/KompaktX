@@ -64,6 +64,7 @@ object OverlayPanelManager {
     private var touchStripView: View? = null
     private var brightnessOverlay: View? = null  // Persistent full-screen overlay just for screenBrightness
     private var brightnessObserver: ContentObserver? = null  // Watches system brightness changes
+    private var brightnessModeObserver: ContentObserver? = null  // Watches Adaptive Brightness on/off
     private var panelView: View? = null         // The root FrameLayout attached to WindowManager
     private var panelContentView: ViewGroup? = null  // The inner LinearLayout we swap content in
     private var headsUpView: View? = null
@@ -129,24 +130,26 @@ object OverlayPanelManager {
         stripContext = context
         loadSavedBrightness(context)
 
-        // Watch for system brightness changes and override with our target
+        // Mirror the system's brightness state onto our window overrides whenever anything —
+        // the stock System UI slider, another app, or the OS's own adaptive curve — changes it.
+        // This never writes back, so there is no feedback loop and no fight with the system:
+        // whoever wrote the setting wins, and we simply make it reach the physical backlight.
         brightnessObserver = object : ContentObserver(handler) {
-            override fun onChange(selfChange: Boolean) {
-                val target = currentBrightnessTarget
-                if (target < 0) return
-                try {
-                    val sys = Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS)
-                    if (sys != target) {
-                        Settings.System.putInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS, target)
-                        val screenVal = if (target <= 0) 0.001f else target / 255f
-                        applyScreenBrightnessToView(brightnessOverlay, screenVal)
-                    }
-                } catch (_: Exception) {}
-            }
+            override fun onChange(selfChange: Boolean) { syncBrightnessOverrides(context) }
         }
         context.contentResolver.registerContentObserver(
             Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS),
             false, brightnessObserver!!
+        )
+
+        // Adaptive Brightness being toggled (from anywhere) changes which authority owns the
+        // backlight, so it needs the same mirror pass — see syncBrightnessOverrides().
+        brightnessModeObserver = object : ContentObserver(handler) {
+            override fun onChange(selfChange: Boolean) { syncBrightnessOverrides(context) }
+        }
+        context.contentResolver.registerContentObserver(
+            Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS_MODE),
+            false, brightnessModeObserver!!
         )
 
         windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -236,6 +239,10 @@ object OverlayPanelManager {
             try { stripContext?.contentResolver?.unregisterContentObserver(obs) } catch (_: Exception) {}
         }
         brightnessObserver = null
+        brightnessModeObserver?.let { obs ->
+            try { stripContext?.contentResolver?.unregisterContentObserver(obs) } catch (_: Exception) {}
+        }
+        brightnessModeObserver = null
     }
 
     fun recreateTouchStrip() {
@@ -415,11 +422,12 @@ object OverlayPanelManager {
 
             rootFrame = FrameLayout(context)
 
-            // Scrim - tap outside to close
-            val scrim = View(context).apply {
-                setBackgroundColor(WHITE)
-                setOnClickListener { dismissPanel() }
-            }
+            // Backdrop behind the card. The card below is MATCH_PARENT in both axes, so there is
+            // no visible "outside" for the user to tap — this exists only to paint the window
+            // background. It must NOT be clickable: it used to carry a dismissPanel() listener,
+            // which turned every tap that missed a clickable child into an accidental dismiss
+            // (see panelCard.isClickable below).
+            val scrim = View(context).apply { setBackgroundColor(WHITE) }
             rootFrame.addView(scrim, FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -433,6 +441,13 @@ object OverlayPanelManager {
             panelCard = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 background = cardBg
+                // Swallow taps that don't land on an interactive child. A non-clickable
+                // ViewGroup returns false from onTouchEvent, so FrameLayout would hand the
+                // event to the view *below* it — previously the dismiss-on-tap scrim. Because
+                // this card covers the whole screen, that made every near-miss on a small
+                // control (most visibly the tab pills, worst at tabPosition = BOTTOM where a
+                // thumb lands low on the strip's dead padding) silently close the panel.
+                isClickable = true
             }
 
             val panelLP = FrameLayout.LayoutParams(
@@ -602,7 +617,10 @@ object OverlayPanelManager {
                 setTextColor(if (selected) WHITE else BLACK)
                 textSize = baseSmallSize; typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER; background = tabBg
-                setPadding((16 * dp).toInt(), (6 * dp).toInt(), (16 * dp).toInt(), (6 * dp).toInt())
+                // ~44dp touch target, matching the close buttons. The pill background is fully
+                // rounded, so the extra height reads as a taller pill rather than a bigger box.
+                setPadding((16 * dp).toInt(), (8 * dp).toInt(), (16 * dp).toInt(), (8 * dp).toInt())
+                minHeight = (44 * dp).toInt()
                 setOnClickListener {
                     if (panelTab != tabId) { panelTab = tabId; buildAndShowPanel(context) }
                 }
@@ -857,6 +875,7 @@ object OverlayPanelManager {
 
     private var flashlightOn = false
     private var lastManualBrightness = 128  // saved brightness for sun icon toggle
+    private var lastAppliedOverride = Float.NaN  // last screenBrightness pushed to our windows
     private var currentBrightnessTarget = -1  // tracks what brightness we last set (-1 = not managed)
 
     // Live references to brightness UI elements (set when panel is open, cleared on close)
@@ -873,10 +892,10 @@ object OverlayPanelManager {
         val sp = context.getSharedPreferences("kompaktx_brightness", Context.MODE_PRIVATE)
         lastManualBrightness = sp.getInt("last_manual_brightness", 128)
         currentBrightnessTarget = sp.getInt("current_brightness_target", -1)
-        // If we have a saved target, apply it immediately
-        if (currentBrightnessTarget >= 0) {
-            applyBrightness(context.contentResolver, currentBrightnessTarget)
-        }
+        // Service (re)start is not a user gesture, so mirror the system's current state rather
+        // than replaying a saved value — replaying it here is what used to silently flip Adaptive
+        // Brightness back off every time the touch-strip service came up.
+        syncBrightnessOverrides(context, force = true)
     }
 
     private fun saveBrightness(context: Context?) {
@@ -1088,11 +1107,9 @@ object OverlayPanelManager {
             Settings.System.getInt(resolver, Settings.System.SCREEN_BRIGHTNESS)
         } catch (_: Exception) { 128 }
 
-        // Ensure manual brightness mode
-        try {
-            Settings.System.putInt(resolver, Settings.System.SCREEN_BRIGHTNESS_MODE,
-                Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
-        } catch (_: Exception) {}
+        // Deliberately does NOT force manual mode here. Building a view is not a user gesture —
+        // stock Android only leaves Adaptive Brightness when you actually drag the slider, and so
+        // do we (see the ACTION_DOWN/ACTION_MOVE branch below).
 
         val trackH = (6 * dp).toInt()
         val thumbSize = (24 * dp).toInt()
@@ -1170,9 +1187,10 @@ object OverlayPanelManager {
                 MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
                     val frac = ((event.x - thumbSize / 2) / (v.width - thumbSize)).coerceIn(0f, 1f)
                     val brightness = (frac * 255).toInt().coerceIn(1, 255)
-                    try {
-                        Settings.System.putInt(resolver, Settings.System.SCREEN_BRIGHTNESS, brightness)
-                    } catch (_: Exception) {}
+                    // A real drag: take manual ownership of the backlight, exactly as stock
+                    // Android's slider does. Previously this wrote SCREEN_BRIGHTNESS directly and
+                    // relied on the mode being forced when the sub-panel was built.
+                    setManualBrightness(resolver, brightness)
                     updateSliderVisual(brightness, v.width)
                     // Reset hide timer on interaction
                     scheduleSubPanelHide(context)
@@ -1525,10 +1543,9 @@ object OverlayPanelManager {
         val currentBrightness = try {
             Settings.System.getInt(resolver, Settings.System.SCREEN_BRIGHTNESS)
         } catch (_: Exception) { 128 }
-        try {
-            Settings.System.putInt(resolver, Settings.System.SCREEN_BRIGHTNESS_MODE,
-                Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
-        } catch (_: Exception) {}
+        // No mode-forcing here: merely opening the panel to look at the slider must not turn
+        // Adaptive Brightness off. Manual mode is taken on an actual drag / sun-icon tap, both of
+        // which go through setManualBrightness().
 
         // Percentage label on right (declare early so sun icon click can update it)
         val valueText = TextView(context).apply {
@@ -1610,7 +1627,7 @@ object OverlayPanelManager {
                     val frac = ((event.x - thumbSize / 2) / (v.width - thumbSize)).coerceIn(0f, 1f)
                     val b = (frac * 255).toInt().coerceIn(0, 255)
                     if (b > 0) { lastManualBrightness = b; saveBrightness(context) }
-                    applyBrightness(resolver, b)
+                    setManualBrightness(resolver, b)
                     updateSlider(b, v.width)
                     sunIcon.setImageDrawable(BitmapDrawable(context.resources,
                         drawBrightnessIcon(sunSize, false, slashed = b <= 0)))
@@ -1630,7 +1647,7 @@ object OverlayPanelManager {
             } else {
                 lastManualBrightness.coerceAtLeast(10)  // restore, min 10 so it's visible
             }
-            applyBrightness(resolver, target)
+            setManualBrightness(resolver, target)
             if (sliderContainer.width > 0) updateSlider(target, sliderContainer.width)
             // Update sun icon slash state
             sunIcon.setImageDrawable(BitmapDrawable(context.resources,
@@ -2312,19 +2329,87 @@ object OverlayPanelManager {
 
     // ─── Helpers ────────────────────────────────────────────────────
 
-    private fun applyBrightness(resolver: android.content.ContentResolver, brightness: Int) {
-        currentBrightnessTarget = brightness
+    /**
+     * The single write path for brightness. Call this ONLY from a direct user gesture — a slider
+     * drag, a sun-icon tap, the front-light shortcut. It takes ownership of the backlight by
+     * switching the system to manual mode, exactly like dragging stock Android's own slider does,
+     * and publishes the value to Settings.System so every other app's brightness UI agrees with us.
+     *
+     * Everything else (screen wake, service reconnect, panel open, an external app's slider) must
+     * go through [syncBrightnessOverrides] instead, which only mirrors and never writes.
+     */
+    private fun setManualBrightness(resolver: android.content.ContentResolver, brightness: Int) {
+        val clamped = brightness.coerceIn(0, 255)
+        currentBrightnessTarget = clamped
         try {
             Settings.System.putInt(resolver, Settings.System.SCREEN_BRIGHTNESS_MODE,
                 Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
-            Settings.System.putInt(resolver, Settings.System.SCREEN_BRIGHTNESS, brightness)
+            Settings.System.putInt(resolver, Settings.System.SCREEN_BRIGHTNESS, clamped)
         } catch (_: Exception) {}
-        val screenVal = if (brightness <= 0) 0.001f else brightness / 255f
-        applyScreenBrightnessToView(panelView, screenVal)
-        applyScreenBrightnessToView(brightnessOverlay, screenVal)
-        // Also apply via accessibility overlay — persists above lockscreen
-        com.noti.restore.service.RecentsButtonService.applyAccessibilityBrightness(screenVal)
         saveBrightness(stripContext)
+        // Push it to the physical screen now rather than waiting for the observer, so a drag
+        // feels immediate; the observer callback that follows is idempotent and costs nothing.
+        applyOverrideToAllSurfaces(if (clamped <= 0) 0.001f else clamped / 255f, force = true)
+    }
+
+    /**
+     * Mirror the system's current brightness state onto every window override KompaktX holds.
+     *
+     * This is the heart of the brightness model: the override we hold is a pure function of the
+     * two system settings, and this function is the only thing that computes it.
+     *
+     *   Adaptive Brightness ON  → override = BRIGHTNESS_OVERRIDE_NONE (-1), i.e. "no opinion",
+     *                             which hands the backlight back to the OS's ambient-light curve.
+     *   Adaptive Brightness OFF → override = SCREEN_BRIGHTNESS / 255, i.e. mirror the system value
+     *                             so that whatever wrote it (us, the stock slider, another app)
+     *                             actually reaches the panel.
+     *
+     * It reads state and never writes it, so it can be called from anywhere, as often as we like,
+     * without fighting the system or looping through its own ContentObserver.
+     */
+    private fun syncBrightnessOverrides(context: Context, force: Boolean = false) {
+        val resolver = context.contentResolver
+        if (isAdaptiveBrightnessOn(resolver)) {
+            applyOverrideToAllSurfaces(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE, force)
+            return
+        }
+        val sys = try {
+            Settings.System.getInt(resolver, Settings.System.SCREEN_BRIGHTNESS)
+        } catch (_: Exception) { return }
+        // Adopt the system value as our own, so the sun-icon toggle and a later re-apply resume
+        // from what the user last saw rather than from a stale KompaktX-internal number. Only
+        // persist when it actually moved — this runs on every drag event via the observer.
+        if (sys != currentBrightnessTarget) {
+            currentBrightnessTarget = sys
+            if (sys > 0) lastManualBrightness = sys
+            saveBrightness(context)
+        }
+        applyOverrideToAllSurfaces(if (sys <= 0) 0.001f else sys / 255f, force)
+    }
+
+    /**
+     * Apply one screenBrightness value to every surface that can own the backlight: the persistent
+     * 1x1 overlay, the panel window while it is open, and the accessibility overlay that is the
+     * only one of the three visible above the lockscreen.
+     *
+     * The accessibility overlay is updated, never torn down — that window existing and being
+     * refreshed on each wake/reconnect is what makes brightness correct on the lock screen at all
+     * on this device. Removing it (rather than setting it to -1) reopens the old "brightness is
+     * wrong until you unlock" bug. It is only truly removed in [removeTouchStrip], when the whole
+     * overlay subsystem goes away.
+     *
+     * @param force re-apply even if the value is unchanged. Required whenever a *window* may be
+     * new rather than the value — panel opened, accessibility service reconnected, touch strip
+     * recreated — because a freshly created window starts with no override of its own. Left false
+     * for ContentObserver-driven syncs, which fire on every drag event and would otherwise churn
+     * three window updates per motion event on a slow e-ink panel.
+     */
+    private fun applyOverrideToAllSurfaces(screenValue: Float, force: Boolean = false) {
+        if (!force && screenValue == lastAppliedOverride) return
+        lastAppliedOverride = screenValue
+        applyScreenBrightnessToView(panelView, screenValue)
+        applyScreenBrightnessToView(brightnessOverlay, screenValue)
+        com.noti.restore.service.RecentsButtonService.applyAccessibilityBrightness(screenValue)
     }
 
     private fun applyScreenBrightnessToView(view: View?, brightness: Float) {
@@ -2336,12 +2421,24 @@ object OverlayPanelManager {
         } catch (_: Exception) {}
     }
 
-    /** Re-apply our brightness target after screen wake. Forces both Settings.System and overlay. */
+    /** True when the system's own Adaptive Brightness is currently on. */
+    private fun isAdaptiveBrightnessOn(resolver: android.content.ContentResolver): Boolean {
+        return try {
+            Settings.System.getInt(resolver, Settings.System.SCREEN_BRIGHTNESS_MODE) ==
+                Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC
+        } catch (_: Exception) { false }
+    }
+
+    /**
+     * Re-assert our overrides after a screen wake or an accessibility-service reconnect (which
+     * includes the reconnect right after an unlock). Deliberately a mirror pass, not a write: a
+     * wake is not the user touching a brightness control, so it must never flip Adaptive
+     * Brightness off — but it must still re-apply, because the accessibility overlay needs
+     * refreshing on every reconnect for the lockscreen to render correctly.
+     */
     fun reapplyBrightness() {
         val ctx = stripContext ?: return
-        val target = currentBrightnessTarget
-        if (target < 0) return
-        handler.post { applyBrightness(ctx.contentResolver, target) }
+        handler.post { syncBrightnessOverrides(ctx, force = true) }
     }
 
     /** Update the live brightness slider/icon UI if the panel is currently open. */
@@ -2375,10 +2472,7 @@ object OverlayPanelManager {
     /** Toggle front light between off (0) and last manual brightness. Callable from anywhere. */
     fun toggleFrontLight(context: Context) {
         val resolver = context.contentResolver
-        try {
-            Settings.System.putInt(resolver, Settings.System.SCREEN_BRIGHTNESS_MODE,
-                Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
-        } catch (_: Exception) {}
+        // Mode-forcing lives in setManualBrightness() below — no need to write it twice here.
         val current = try {
             Settings.System.getInt(resolver, Settings.System.SCREEN_BRIGHTNESS)
         } catch (_: Exception) { 0 }
@@ -2389,7 +2483,7 @@ object OverlayPanelManager {
         } else {
             lastManualBrightness.coerceAtLeast(10)
         }
-        applyBrightness(resolver, target)
+        setManualBrightness(resolver, target)
         updateBrightnessUI(target)
         refreshPanelIfShowing()
     }
