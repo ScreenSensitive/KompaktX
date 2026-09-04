@@ -117,6 +117,14 @@ object OverlayPanelManager {
      */
     private const val WAKE_RESTORE_GRACE_MS = 3000L
 
+    /**
+     * How long to keep asserting "off" after an unexplained brightness rise before concluding a
+     * person really did raise it elsewhere. Only needs to outlast the gap between the OS's
+     * wake-time brightness write and the ACTION_SCREEN_ON broadcast that explains it.
+     */
+    private const val OFF_STATE_RELEASE_DELAY_MS = 2000L
+
+
     // Current context for recreating strip
     private var stripContext: Context? = null
 
@@ -915,6 +923,7 @@ object OverlayPanelManager {
      */
     private var pendingWakeRestore = false
     private var clearWakeRestoreRunnable: Runnable? = null
+    private var offStateReleaseRunnable: Runnable? = null
 
     /** Whether the front light is currently off from the user's point of view. */
     private val isFrontLightOff: Boolean get() = frontLightOff
@@ -2462,24 +2471,30 @@ object OverlayPanelManager {
         } catch (_: Exception) { return }
 
         if (frontLightOff) {
-            if (sys <= 0 || force || pendingWakeRestore) {
-                // Still off. Either the setting already agrees with us, or this is a wake/reconnect
-                // pass where a nonzero value is the OS's own restore rather than anything the user
-                // asked for. Re-publish the intent so other apps' brightness UIs keep showing off,
-                // and keep the sub-minimum override that is what actually darkens the panel.
-                if (sys > 0) {
-                    try {
-                        Settings.System.putInt(resolver, Settings.System.SCREEN_BRIGHTNESS, 0)
-                    } catch (_: Exception) {}
-                }
-                currentBrightnessTarget = 0
-                applyOverrideToAllSurfaces(0.001f, force)
-                return
+            if (sys > 0 && !force && !pendingWakeRestore) {
+                // Ambiguous: a nonzero value while we believe the light is off is either the OS
+                // restoring brightness as the screen comes back (its write reaches this observer
+                // *before* the SCREEN_ON broadcast reaches us, so we cannot yet know) or someone
+                // genuinely raising brightness in another app.
+                //
+                // Don't decide now — assume off and schedule the release. A SCREEN_ON arriving in
+                // the meantime cancels it, proving it was the wake restore. Deferring this way
+                // wins the race no matter which event lands first, which arming a flag on either
+                // broadcast alone did not.
+                scheduleOffStateRelease(context, sys)
             }
-            // Awake, and something raised the brightness well after the wake settled — a real
-            // external change (stock slider, another app). The user wants light again.
-            frontLightOff = false
-            saveBrightness(context)
+            // Re-publish the intent so other apps' brightness UIs still show off, and re-assert
+            // the sub-minimum override that is what actually darkens the panel. Always forced:
+            // after a wake the OS has changed the applied brightness underneath us, so the
+            // unchanged-value short-circuit must not suppress this.
+            if (sys > 0) {
+                try {
+                    Settings.System.putInt(resolver, Settings.System.SCREEN_BRIGHTNESS, 0)
+                } catch (_: Exception) {}
+            }
+            currentBrightnessTarget = 0
+            applyOverrideToAllSurfaces(0.001f, force = true)
+            return
         }
 
         // Adopt the system value as our own, so the sun-icon toggle and a later re-apply resume
@@ -2547,6 +2562,9 @@ object OverlayPanelManager {
      */
     fun reapplyBrightness() {
         val ctx = stripContext ?: return
+        // A screen-on retroactively explains any brightness change we were about to treat as a
+        // user action: it was the OS restoring brightness for the wake.
+        cancelOffStateRelease()
         handler.post { syncBrightnessOverrides(ctx, force = true) }
         // Keep attributing brightness writes to the OS for a moment after the screen comes back —
         // it can write more than once as the display settles — then hand control back to the user.
@@ -2567,7 +2585,33 @@ object OverlayPanelManager {
     fun onScreenOff() {
         clearWakeRestoreRunnable?.let { handler.removeCallbacks(it) }
         clearWakeRestoreRunnable = null
+        cancelOffStateRelease()
         pendingWakeRestore = true
+    }
+
+    /**
+     * Arm the pending "the user really did want light again" decision. Cancelled by a screen-on,
+     * which retroactively identifies the brightness change as the OS's own wake restore.
+     */
+    private fun scheduleOffStateRelease(context: Context, observed: Int) {
+        if (offStateReleaseRunnable != null) return  // already pending; don't restart the clock
+        val r = Runnable {
+            offStateReleaseRunnable = null
+            if (!frontLightOff) return@Runnable
+            // Act on the value that triggered this, not a fresh read: the assert below has since
+            // republished 0, so re-reading the setting would always look like "already off" and
+            // this release could never fire.
+            frontLightOff = false
+            setManualBrightness(context.contentResolver, observed)
+            updateBrightnessUI(observed)
+        }
+        offStateReleaseRunnable = r
+        handler.postDelayed(r, OFF_STATE_RELEASE_DELAY_MS)
+    }
+
+    private fun cancelOffStateRelease() {
+        offStateReleaseRunnable?.let { handler.removeCallbacks(it) }
+        offStateReleaseRunnable = null
     }
 
     /** Update the live brightness slider/icon UI if the panel is currently open. */
