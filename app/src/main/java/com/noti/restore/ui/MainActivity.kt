@@ -189,31 +189,6 @@ fun KompaktXApp() {
             }
         }
 
-        Spacer(Modifier.height(8.dp))
-
-        // Donation button
-        SettingsCard {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://buymeacoffee.com/screensensitive"))
-                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        context.startActivity(intent)
-                    }
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(Icons.Default.Favorite, null, tint = FG, modifier = Modifier.size(24.dp))
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("Buy Me a Coffee", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = FG)
-                    Text("Support KompaktX development", fontSize = 12.sp, color = FG)
-                }
-                Icon(Icons.Default.ChevronRight, null, tint = FG, modifier = Modifier.size(20.dp))
-            }
-        }
-
         Spacer(Modifier.height(20.dp))
 
         // Permissions — section and each row hide once granted
@@ -259,7 +234,7 @@ fun KompaktXApp() {
                 }
                 if (!hasWriteSettings) {
                     if (!first) Divider(color = FG, thickness = 1.dp)
-                    PermissionRow("Modify System Settings", "Required for brightness and custom tones",
+                    PermissionRow("Modify System Settings", "Required for brightness, adaptive brightness, and custom tones",
                         Icons.Default.Tune, false
                     ) { context.startActivity(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
                         data = android.net.Uri.parse("package:${context.packageName}")
@@ -510,6 +485,43 @@ fun KompaktXApp() {
 
         // Custom Tones
         CustomTonesSection(context)
+
+        Spacer(Modifier.height(28.dp))
+
+        // Support — deliberately last, and deliberately lighter than the cards above.
+        //
+        // It used to sit second on the screen, above the permissions, in a full-width card
+        // identical to the functional rows — so it read as a setting and was the first thing a
+        // new user hit before the app even worked. Here it's the closing note instead: a
+        // centred, self-contained pill that is still obvious at a glance, but only after
+        // everything the user actually came for.
+        Row(
+            modifier = Modifier
+                .align(Alignment.CenterHorizontally)
+                .clip(RoundedCornerShape(20.dp))
+                .border(1.dp, BORDER, RoundedCornerShape(20.dp))
+                .clickable {
+                    val intent = Intent(
+                        Intent.ACTION_VIEW,
+                        android.net.Uri.parse("https://buymeacoffee.com/screensensitive")
+                    )
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(intent)
+                }
+                .padding(horizontal = 18.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.Favorite, null, tint = FG, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Buy Me a Coffee", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = FG)
+        }
+        Text(
+            "Support KompaktX development",
+            fontSize = 11.sp, color = FG,
+            modifier = Modifier
+                .align(Alignment.CenterHorizontally)
+                .padding(top = 6.dp)
+        )
 
         Spacer(Modifier.height(32.dp))
     }
