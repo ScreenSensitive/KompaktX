@@ -97,9 +97,6 @@ class RecentsButtonService : AccessibilityService() {
         // Volume long press for media skip (only when media is playing)
         @Volatile var volumeLongPressMediaEnabled = false
 
-        // Auto scroll mode (reserved for future use)
-        @Volatile var scrollAutoModeEnabled = false
-
         /** Update all shortcut assignments at once from ShortcutTrigger values. */
         fun updateShortcuts(
             frontLightTrigger: Int,

@@ -73,10 +73,7 @@ class PreferencesManager(private val context: Context) {
         private val SHORTCUT_EINK_REFRESH = intPreferencesKey("shortcut_eink_refresh")
         private val SHORTCUT_REFRESH_CYCLE = intPreferencesKey("shortcut_refresh_cycle")
         // Refresh cycle: which 2 modes to alternate between (EinkMode values)
-        private val REFRESH_CYCLE_MODE_A = intPreferencesKey("refresh_cycle_mode_a")
-        private val REFRESH_CYCLE_MODE_B = intPreferencesKey("refresh_cycle_mode_b")
         private val VOLUME_LONG_PRESS_MEDIA = booleanPreferencesKey("volume_long_press_media")
-        private val SCROLL_AUTO_MODE = booleanPreferencesKey("scroll_auto_mode")
         private val RECENTS_LAYOUT_MODE = intPreferencesKey("recents_layout_mode")
         private val HIDE_APP_ICONS = booleanPreferencesKey("hide_app_icons")
         private val THEME_MODE = intPreferencesKey("theme_mode")
@@ -106,10 +103,7 @@ class PreferencesManager(private val context: Context) {
     val shortcutFrontLight: Flow<Int> = context.dataStore.data.map { it[SHORTCUT_FRONT_LIGHT] ?: ShortcutTrigger.NONE }
     val shortcutEinkRefresh: Flow<Int> = context.dataStore.data.map { it[SHORTCUT_EINK_REFRESH] ?: ShortcutTrigger.NONE }
     val shortcutRefreshCycle: Flow<Int> = context.dataStore.data.map { it[SHORTCUT_REFRESH_CYCLE] ?: ShortcutTrigger.NONE }
-    val refreshCycleModeA: Flow<Int> = context.dataStore.data.map { it[REFRESH_CYCLE_MODE_A] ?: 1 } // default Contrast
-    val refreshCycleModeB: Flow<Int> = context.dataStore.data.map { it[REFRESH_CYCLE_MODE_B] ?: 2 } // default Speed
     val volumeLongPressMedia: Flow<Boolean> = context.dataStore.data.map { it[VOLUME_LONG_PRESS_MEDIA] ?: false }
-    val scrollAutoMode: Flow<Boolean> = context.dataStore.data.map { it[SCROLL_AUTO_MODE] ?: false }
     val recentsLayoutMode: Flow<Int> = context.dataStore.data.map { it[RECENTS_LAYOUT_MODE] ?: RecentsLayoutMode.INLINE }
     val hideAppIcons: Flow<Boolean> = context.dataStore.data.map { it[HIDE_APP_ICONS] ?: false }
     val themeMode: Flow<Int> = context.dataStore.data.map { it[THEME_MODE] ?: ThemeMode.SYSTEM }
@@ -124,10 +118,7 @@ class PreferencesManager(private val context: Context) {
     suspend fun setFontSizeOffset(offset: Int) { context.dataStore.edit { it[FONT_SIZE_OFFSET] = offset.coerceIn(-2, 4) } }
     suspend fun setEinkControlsEnabled(enabled: Boolean) { context.dataStore.edit { it[EINK_CONTROLS_ENABLED] = enabled } }
 
-    suspend fun setRefreshCycleModeA(mode: Int) { context.dataStore.edit { it[REFRESH_CYCLE_MODE_A] = mode } }
-    suspend fun setRefreshCycleModeB(mode: Int) { context.dataStore.edit { it[REFRESH_CYCLE_MODE_B] = mode } }
     suspend fun setVolumeLongPressMedia(enabled: Boolean) { context.dataStore.edit { it[VOLUME_LONG_PRESS_MEDIA] = enabled } }
-    suspend fun setScrollAutoMode(enabled: Boolean) { context.dataStore.edit { it[SCROLL_AUTO_MODE] = enabled } }
     suspend fun setRecentsLayoutMode(mode: Int) { context.dataStore.edit { it[RECENTS_LAYOUT_MODE] = mode } }
     suspend fun setHideAppIcons(enabled: Boolean) { context.dataStore.edit { it[HIDE_APP_ICONS] = enabled } }
     suspend fun setThemeMode(mode: Int) { context.dataStore.edit { it[THEME_MODE] = mode } }
