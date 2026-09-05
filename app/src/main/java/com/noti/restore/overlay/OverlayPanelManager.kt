@@ -23,6 +23,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import kotlinx.coroutines.launch
 import android.database.ContentObserver
 import android.service.notification.StatusBarNotification
 import android.text.TextUtils
@@ -70,6 +71,10 @@ object OverlayPanelManager {
     private var headsUpView: View? = null
     private var headsUpParams: WindowManager.LayoutParams? = null
     private val handler = Handler(Looper.getMainLooper())
+    /** For preference writes made from the panel itself, e.g. the app long-press menu. */
+    private val managerScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate
+    )
     private var dismissRunnable: Runnable? = null
     private var replyBoxOpen = false
 
@@ -672,15 +677,25 @@ object OverlayPanelManager {
                 cornerRadius = 100 * dp
                 if (selected) setColor(BLACK) else setColor(0x00000000)
             }
-            tabContainer.addView(TextView(context).apply {
+            // The pill keeps its compact look, but the thing that receives the touch is a taller
+            // wrapper around it. Sizing the target with padding alone tied hitbox to appearance
+            // and left the pills ~6 mm tall — under the ~7 mm needed to hit reliably, which is why
+            // presses sometimes didn't register. The wrapper also absorbs taps in the gaps
+            // between pills, so a near-miss still selects a tab instead of doing nothing.
+            val tabLabel = TextView(context).apply {
                 text = label
                 setTextColor(if (selected) WHITE else BLACK)
                 textSize = baseSmallSize; typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER; background = tabBg
-                // Same vertical padding as the WiFi/Bluetooth/Flashlight pills in the settings
-                // grid, so the two sets of pill controls read as one family. A forced 44dp box
-                // made these noticeably chunkier than those toggles.
-                setPadding((16 * dp).toInt(), (10 * dp).toInt(), (16 * dp).toInt(), (10 * dp).toInt())
+                setPadding((16 * dp).toInt(), (7 * dp).toInt(), (16 * dp).toInt(), (7 * dp).toInt())
+            }
+            tabContainer.addView(FrameLayout(context).apply {
+                minimumHeight = (46 * dp).toInt()
+                addView(tabLabel, FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT
+                ).apply { gravity = Gravity.CENTER })
+                isClickable = true
                 setOnClickListener {
                     if (panelTab != tabId) { panelTab = tabId; buildAndShowPanel(context) }
                 }
@@ -1493,12 +1508,7 @@ object OverlayPanelManager {
             setPadding(0, (4 * dp).toInt(), 0, (4 * dp).toInt())
         }
 
-        // ── Row 1: WiFi + Bluetooth + Flashlight as 3 equal pill buttons ──
-        val pillRow = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
-            setPadding(0, 0, 0, (10 * dp).toInt())
-        }
-
+        // ── Quick toggles, wrapped into rows further down ──
         val iconSize = (22 * dp).toInt()
 
         data class PillItem(
@@ -1588,7 +1598,22 @@ object OverlayPanelManager {
             ))
         }
 
+        // Four pills across a 56 mm screen leaves each about 13 mm wide, which squashes the
+        // longer labels. Wrap to rows of two instead once there are more than three.
+        val perRow = if (pills.size > 3) 2 else pills.size.coerceAtLeast(1)
+        var currentRow: LinearLayout? = null
         for ((idx, pill) in pills.withIndex()) {
+            if (idx % perRow == 0) {
+                currentRow = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply { if (idx > 0) topMargin = (8 * dp).toInt() }
+                }
+                grid.addView(currentRow)
+            }
             val iconView = ImageView(context).apply {
                 setImageDrawable(BitmapDrawable(context.resources, pill.icon))
                 layoutParams = LinearLayout.LayoutParams((20 * dp).toInt(), (20 * dp).toInt()).apply {
@@ -1610,8 +1635,9 @@ object OverlayPanelManager {
                 background = bg
                 setPadding((10 * dp).toInt(), (10 * dp).toInt(), (12 * dp).toInt(), (10 * dp).toInt())
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                    if (idx > 0) marginStart = (4 * dp).toInt()
-                    if (idx < pills.size - 1) marginEnd = (4 * dp).toInt()
+                    val posInRow = idx % perRow
+                    if (posInRow > 0) marginStart = (4 * dp).toInt()
+                    if (posInRow < perRow - 1) marginEnd = (4 * dp).toInt()
                 }
                 setOnClickListener {
                     pill.onTap()
@@ -1629,9 +1655,11 @@ object OverlayPanelManager {
             }
             pillView.addView(iconView)
             pillView.addView(labelView)
-            pillRow.addView(pillView)
+            currentRow?.addView(pillView)
         }
-        grid.addView(pillRow)
+
+        // Breathing room before the System Settings row below.
+        currentRow?.let { (it.layoutParams as? LinearLayout.LayoutParams)?.bottomMargin = (10 * dp).toInt() }
 
         // Straight into Android's own settings — the one destination the panel can't provide
         // itself, and awkward to reach on a device with no app drawer shortcut for it.
@@ -1793,7 +1821,7 @@ object OverlayPanelManager {
             })
         }
 
-        action("App info", "Permissions, storage, force stop") {
+        fun openAppInfo() {
             try {
                 context.startActivity(
                     Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
@@ -1802,15 +1830,46 @@ object OverlayPanelManager {
                     }
                 )
             } catch (_: Exception) {}
-            close(); dismissPanel()
         }
-        action("Stop app", "Ends background processes where allowed") {
+
+        // killBackgroundProcesses only reaps *background* processes and the system may ignore it,
+        // so on its own it frequently appears to do nothing. Nothing stronger is available: a real
+        // force stop needs FORCE_STOP_PACKAGES, which is signature|privileged with no development
+        // flag, so unlike WRITE_SECURE_SETTINGS it cannot even be granted over adb, and the device
+        // has no root. So do the best-effort kill and then hand over to the one screen that has a
+        // working Force Stop button, rather than pretending the kill was enough.
+        action("Force stop", "Best effort, then opens App info to confirm") {
             try {
                 (context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager)
                     .killBackgroundProcesses(pkg)
             } catch (_: Exception) {}
-            close()
-            refreshPanelIfShowing()
+            openAppInfo()
+            close(); dismissPanel()
+        }
+        action("App info", "Permissions, storage, notifications") {
+            openAppInfo(); close(); dismissPanel()
+        }
+        action(
+            if (hiddenNotiApps.contains(pkg)) "Unhide from notifications" else "Hide from notifications",
+            null
+        ) {
+            val hide = !hiddenNotiApps.contains(pkg)
+            managerScope.launch {
+                val prefs = com.noti.restore.ui.PreferencesManager.getInstance(context.applicationContext)
+                if (hide) prefs.addHiddenNotiApp(pkg) else prefs.removeHiddenNotiApp(pkg)
+            }
+            close(); refreshPanelIfShowing()
+        }
+        action(
+            if (hiddenRecentApps.contains(pkg)) "Unhide from recents" else "Hide from recents",
+            null
+        ) {
+            val hide = !hiddenRecentApps.contains(pkg)
+            managerScope.launch {
+                val prefs = com.noti.restore.ui.PreferencesManager.getInstance(context.applicationContext)
+                if (hide) prefs.addHiddenRecentApp(pkg) else prefs.removeHiddenRecentApp(pkg)
+            }
+            close(); refreshPanelIfShowing()
         }
         action("Cancel", null) { close() }
 
