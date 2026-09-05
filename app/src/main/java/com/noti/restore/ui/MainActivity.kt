@@ -171,6 +171,7 @@ fun KompaktXApp() {
     val shortcutRefreshCycle by prefs.shortcutRefreshCycle.collectAsState(initial = ShortcutTrigger.NONE)
     val volumeLongPressMedia by prefs.volumeLongPressMedia.collectAsState(initial = false)
     val autoStart by prefs.autoStart.collectAsState(initial = true)
+    val hapticsEnabled by prefs.hapticsEnabled.collectAsState(initial = true)
     val showLocationToggle by prefs.showLocationToggle.collectAsState(initial = false)
     // Re-checked on the status tick so granting it over adb takes effect without a restart.
     val hasSecureSettings = remember(tick) {
@@ -394,6 +395,10 @@ fun KompaktXApp() {
                 }
                 Icon(Icons.Default.ChevronRight, null, tint = FG, modifier = Modifier.size(20.dp))
             }
+            Divider(color = FG, thickness = 1.dp)
+            ToggleRow("Haptic Feedback", "Short buzz when panel buttons and tabs are pressed",
+                Icons.Default.Vibration, hapticsEnabled
+            ) { scope.launch { prefs.setHapticsEnabled(it) } }
             Divider(color = FG, thickness = 1.dp)
             ToggleRow("E-Ink Controls", if (MeinkController.isAvailable) "Show display mode buttons in panel" else "Not available on this device",
                 Icons.Default.Contrast, einkControlsEnabled

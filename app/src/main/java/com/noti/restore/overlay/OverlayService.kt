@@ -100,6 +100,7 @@ class OverlayService : Service() {
         watch(prefs.hideAppIcons) { OverlayPanelManager.hideAppIcons = it }
         watch(prefs.fontSizeOffset) { OverlayPanelManager.fontSizeOffset = it }
         watch(prefs.einkControlsEnabled) { OverlayPanelManager.einkControlsEnabled = it }
+        watch(prefs.hapticsEnabled) { OverlayPanelManager.hapticsEnabled = it }
         watch(prefs.showLocationToggle) { OverlayPanelManager.showLocationToggle = it }
         watch(prefs.hiddenRecentApps) { OverlayPanelManager.hiddenRecentApps = it }
         watch(prefs.hiddenNotiApps) {

@@ -62,6 +62,7 @@ class PreferencesManager(private val context: Context) {
         private val HIDDEN_NOTI_APPS = stringSetPreferencesKey("hidden_noti_apps")
         private val HIDDEN_RECENT_APPS = stringSetPreferencesKey("hidden_recent_apps")
         private val AUTO_START = booleanPreferencesKey("auto_start")
+        private val HAPTICS_ENABLED = booleanPreferencesKey("haptics_enabled")
         private val SHOW_LOCATION_TOGGLE = booleanPreferencesKey("show_location_toggle")
         private val TRIGGER_MODE = intPreferencesKey("trigger_mode")
         private val FONT_SIZE_OFFSET = intPreferencesKey("font_size_offset")
@@ -96,6 +97,7 @@ class PreferencesManager(private val context: Context) {
     val hiddenNotiApps: Flow<Set<String>> = context.dataStore.data.map { it[HIDDEN_NOTI_APPS] ?: emptySet() }
     val hiddenRecentApps: Flow<Set<String>> = context.dataStore.data.map { it[HIDDEN_RECENT_APPS] ?: emptySet() }
     val autoStart: Flow<Boolean> = context.dataStore.data.map { it[AUTO_START] ?: true }
+    val hapticsEnabled: Flow<Boolean> = context.dataStore.data.map { it[HAPTICS_ENABLED] ?: true }
     val showLocationToggle: Flow<Boolean> = context.dataStore.data.map { it[SHOW_LOCATION_TOGGLE] ?: false }
     val triggerMode: Flow<Int> = context.dataStore.data.map { it[TRIGGER_MODE] ?: TriggerMode.SWIPE_LEFT_EDGE }
     val fontSizeOffset: Flow<Int> = context.dataStore.data.map { it[FONT_SIZE_OFFSET] ?: 0 }
@@ -116,6 +118,7 @@ class PreferencesManager(private val context: Context) {
     suspend fun setHeadsUpEnabled(enabled: Boolean) { context.dataStore.edit { it[HEADS_UP_ENABLED] = enabled } }
     suspend fun setRecentAppsEnabled(enabled: Boolean) { context.dataStore.edit { it[RECENT_APPS_ENABLED] = enabled } }
     suspend fun setAutoStart(enabled: Boolean) { context.dataStore.edit { it[AUTO_START] = enabled } }
+    suspend fun setHapticsEnabled(enabled: Boolean) { context.dataStore.edit { it[HAPTICS_ENABLED] = enabled } }
     suspend fun setShowLocationToggle(enabled: Boolean) { context.dataStore.edit { it[SHOW_LOCATION_TOGGLE] = enabled } }
     suspend fun setTriggerMode(mode: Int) { context.dataStore.edit { it[TRIGGER_MODE] = mode } }
     suspend fun setFontSizeOffset(offset: Int) { context.dataStore.edit { it[FONT_SIZE_OFFSET] = offset.coerceIn(-2, 4) } }

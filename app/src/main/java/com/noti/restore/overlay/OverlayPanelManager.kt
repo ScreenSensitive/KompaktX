@@ -20,6 +20,8 @@ import android.hardware.camera2.CameraManager
 
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
@@ -95,6 +97,7 @@ object OverlayPanelManager {
     var triggerMode = TriggerMode.SWIPE_LEFT_EDGE
     var fontSizeOffset = 0
     var einkControlsEnabled = false
+    var hapticsEnabled = true
     var showLocationToggle = false
     var hiddenNotiApps: Set<String> = emptySet()
     var hiddenRecentApps: Set<String> = emptySet()
@@ -123,6 +126,9 @@ object OverlayPanelManager {
      * because the Kompakt's e-ink pipeline settles slowly after a wake.
      */
     private const val WAKE_RESTORE_GRACE_MS = 3000L
+
+    /** How far a drag must travel horizontally before it counts as a tab swipe. */
+    private const val TAB_SWIPE_THRESHOLD_DP = 44f
 
     /**
      * How long to keep asserting "off" after an unexplained brightness rise before concluding a
@@ -416,6 +422,8 @@ object OverlayPanelManager {
     private val TAB_NOTIFICATIONS = 1
     private val TAB_SETTINGS = 2
     private var panelTab = TAB_NOTIFICATIONS
+    /** Visible tabs in display order — the sequence swipes cycle through. */
+    private var visibleTabs: List<Int> = emptyList()
 
     /**
      * The trigger gesture is a toggle: the same swipe that opened the panel closes it again.
@@ -466,7 +474,56 @@ object OverlayPanelManager {
             else
                 @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_SYSTEM_ALERT
 
-            rootFrame = FrameLayout(context)
+            // Intercepting here rather than listening on a child: the panel is full of
+            // ScrollViews and clickable rows that would otherwise swallow the gesture. A drag is
+            // claimed only once it is clearly horizontal, so vertical scrolling and taps still
+            // reach children untouched.
+            rootFrame = object : FrameLayout(context) {
+                private var downX = 0f
+                private var downY = 0f
+                private var claimed = false
+                private val slop = TAB_SWIPE_THRESHOLD_DP * context.resources.displayMetrics.density
+
+                override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+                    when (ev.actionMasked) {
+                        MotionEvent.ACTION_DOWN -> {
+                            downX = ev.x; downY = ev.y; claimed = false
+                        }
+                        MotionEvent.ACTION_MOVE -> {
+                            if (claimed) return true
+                            val dx = ev.x - downX
+                            val dy = ev.y - downY
+                            if (kotlin.math.abs(dx) > slop &&
+                                kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.5f
+                            ) {
+                                claimed = true
+                                return true
+                            }
+                        }
+                    }
+                    return false
+                }
+
+                override fun onTouchEvent(ev: MotionEvent): Boolean {
+                    when (ev.actionMasked) {
+                        MotionEvent.ACTION_DOWN -> { downX = ev.x; downY = ev.y; return true }
+                        MotionEvent.ACTION_UP -> {
+                            val dx = ev.x - downX
+                            val dy = ev.y - downY
+                            if (kotlin.math.abs(dx) > slop &&
+                                kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.5f
+                            ) {
+                                // Swipe left moves forward, matching how paged content reads.
+                                cycleTab(context, forward = dx < 0)
+                            }
+                            claimed = false
+                            return true
+                        }
+                        MotionEvent.ACTION_CANCEL -> { claimed = false; return true }
+                    }
+                    return true
+                }
+            }
 
             // Backdrop behind the card. The card below is MATCH_PARENT in both axes, so there is
             // no visible "outside" for the user to tap — this exists only to paint the window
@@ -607,6 +664,7 @@ object OverlayPanelManager {
         }
         // Snap selection to a visible tab.
         if (tabs.none { it.first == panelTab }) panelTab = TAB_NOTIFICATIONS
+        visibleTabs = tabs.map { it.first }
 
         val tabBar = buildTabBar(context, dp, borderW, tabs)
         val tabContent = buildTabContent(context, dp, borderW)
@@ -683,7 +741,9 @@ object OverlayPanelManager {
                 // made these noticeably chunkier than those toggles.
                 setPadding((16 * dp).toInt(), (10 * dp).toInt(), (16 * dp).toInt(), (10 * dp).toInt())
                 setOnClickListener {
-                    if (panelTab != tabId) { panelTab = tabId; buildAndShowPanel(context) }
+                    if (panelTab != tabId) {
+                        tapFeedback(context); panelTab = tabId; buildAndShowPanel(context)
+                    }
                 }
             })
         }
@@ -1653,6 +1713,7 @@ object OverlayPanelManager {
                     if (posInRow < perRow - 1) marginEnd = (4 * dp).toInt()
                 }
                 setOnClickListener {
+                    tapFeedback(context)
                     pill.onTap()
                     // Instant visual update — swap colors in place, no panel rebuild
                     val nowOn = pill.isOnAfterTap()
@@ -2406,6 +2467,43 @@ object OverlayPanelManager {
     }
 
     /** Launch an app by package name from a recents entry. Dismisses the panel on success. */
+    /**
+     * Short tick on a deliberate press. Uses the Vibrator directly rather than
+     * performHapticFeedback, which is silently dropped when a view has haptics disabled or the
+     * window is not focusable — and the panel window deliberately is not.
+     */
+    private fun tapFeedback(context: Context) {
+        if (!hapticsEnabled) return
+        try {
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE)
+                    as android.os.VibratorManager).defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            }
+            if (!vibrator.hasVibrator()) return
+            vibrator.vibrate(VibrationEffect.createOneShot(18, 90))
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Move to the next or previous visible tab, wrapping at both ends.
+     *
+     * Snaps straight to the new tab with no transition — an animated slide would be a stream of
+     * partial refreshes on e-ink, and the panel already rebuilds in place.
+     */
+    private fun cycleTab(context: Context, forward: Boolean) {
+        val tabs = visibleTabs
+        if (tabs.size < 2) return
+        val current = tabs.indexOf(panelTab).takeIf { it >= 0 } ?: 0
+        val next = ((current + if (forward) 1 else -1) + tabs.size) % tabs.size
+        if (tabs[next] == panelTab) return
+        panelTab = tabs[next]
+        tapFeedback(context)
+        buildAndShowPanel(context)
+    }
+
     private fun launchApp(context: Context, pkg: String) {
         try {
             val li = Intent(Intent.ACTION_MAIN).apply {
