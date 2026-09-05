@@ -715,7 +715,6 @@ private fun LocationToggleScreen(
                 )
                 if (!granted) {
                     Spacer(Modifier.height(14.dp))
-                    Text("From a computer", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = FG)
                     // The command itself is the button — a separate "copy" control next to a
                     // block of text you obviously want to copy is one thing too many on a
                     // screen this narrow.
@@ -745,13 +744,6 @@ private fun LocationToggleScreen(
                                 fontWeight = FontWeight.Bold)
                         }
                     }
-                    Spacer(Modifier.height(14.dp))
-                    Text("Without a computer", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = FG)
-                    Text(
-                        "Turn on Wireless debugging in Developer options, then use an on-device " +
-                            "adb app such as LADB to pair with this phone and run the same command.",
-                        fontSize = 12.sp, color = FG, modifier = Modifier.padding(top = 4.dp)
-                    )
                     Spacer(Modifier.height(10.dp))
                     Text(
                         "This screen updates on its own once the permission is granted.",
