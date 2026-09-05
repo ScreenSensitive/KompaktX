@@ -171,7 +171,6 @@ fun KompaktXApp() {
     val shortcutRefreshCycle by prefs.shortcutRefreshCycle.collectAsState(initial = ShortcutTrigger.NONE)
     val volumeLongPressMedia by prefs.volumeLongPressMedia.collectAsState(initial = false)
     val autoStart by prefs.autoStart.collectAsState(initial = true)
-    val showMemory by prefs.showMemory.collectAsState(initial = false)
     val showLocationToggle by prefs.showLocationToggle.collectAsState(initial = false)
     // Re-checked on the status tick so granting it over adb takes effect without a restart.
     val hasSecureSettings = remember(tick) {
@@ -395,10 +394,6 @@ fun KompaktXApp() {
                 }
                 Icon(Icons.Default.ChevronRight, null, tint = FG, modifier = Modifier.size(20.dp))
             }
-            Divider(color = FG, thickness = 1.dp)
-            ToggleRow("Show Memory Usage", "Used and total RAM in the panel's settings tab",
-                Icons.Default.Memory, showMemory
-            ) { scope.launch { prefs.setShowMemory(it) } }
             Divider(color = FG, thickness = 1.dp)
             ToggleRow("E-Ink Controls", if (MeinkController.isAvailable) "Show display mode buttons in panel" else "Not available on this device",
                 Icons.Default.Contrast, einkControlsEnabled

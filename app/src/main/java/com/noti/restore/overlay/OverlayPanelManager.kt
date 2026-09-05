@@ -72,11 +72,6 @@ object OverlayPanelManager {
     private var headsUpParams: WindowManager.LayoutParams? = null
     private val handler = Handler(Looper.getMainLooper())
 
-    // Live memory readout, refreshed in place while the panel is open.
-    private var liveMemoryText: TextView? = null
-    private var liveMemoryFill: View? = null
-    private var memoryUpdateRunnable: Runnable? = null
-
     /** For preference writes made from the panel itself, e.g. the app long-press menu. */
     private val managerScope = kotlinx.coroutines.CoroutineScope(
         kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate
@@ -100,7 +95,6 @@ object OverlayPanelManager {
     var triggerMode = TriggerMode.SWIPE_LEFT_EDGE
     var fontSizeOffset = 0
     var einkControlsEnabled = false
-    var showMemory = false
     var showLocationToggle = false
     var hiddenNotiApps: Set<String> = emptySet()
     var hiddenRecentApps: Set<String> = emptySet()
@@ -129,9 +123,6 @@ object OverlayPanelManager {
      * because the Kompakt's e-ink pipeline settles slowly after a wake.
      */
     private const val WAKE_RESTORE_GRACE_MS = 3000L
-
-    /** How often the panel's memory readout refreshes while it is open. */
-    private const val MEMORY_REFRESH_MS = 3000L
 
     /**
      * How long to keep asserting "off" after an unexplained brightness rise before concluding a
@@ -795,7 +786,6 @@ object OverlayPanelManager {
                 // Honour the user's toggle, not just hardware availability — einkControlsEnabled
                 // was being set from settings and then never read, so switching it off left the
                 // refresh controls on the panel.
-                if (showMemory) settingsContent.addView(buildMemoryRow(context, dp, borderW))
                 if (einkControlsEnabled && MeinkController.isAvailable) {
                     settingsContent.addView(buildRefreshModeCircles(context, dp, borderW))
                 }
@@ -849,9 +839,6 @@ object OverlayPanelManager {
     }
 
     private fun dismissPanel() {
-        stopMemoryUpdates()
-        liveMemoryText = null
-        liveMemoryFill = null
         panelView?.let { view ->
             try { windowManager?.removeView(view) } catch (_: Exception) {}
         }
@@ -1725,99 +1712,6 @@ object OverlayPanelManager {
      * Used / total RAM, read straight from ActivityManager. Rendered as a labelled bar so it is
      * legible at a glance on a panel that has no colour to spend on it.
      */
-    private fun buildMemoryRow(context: Context, dp: Float, borderW: Int): View {
-        // Laid out like the brightness row above it — label, track, value on one line — so the
-        // settings tab reads as one column of controls rather than a stack of unrelated blocks.
-        val row = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, (8 * dp).toInt(), 0, (8 * dp).toInt())
-        }
-        row.addView(TextView(context).apply {
-            text = "RAM"
-            setTextColor(BLACK); textSize = baseSmallSize; typeface = Typeface.DEFAULT_BOLD
-            minWidth = (34 * dp).toInt()
-        })
-        val trackH = (8 * dp).toInt()
-        val fill = View(context).apply {
-            setBackgroundColor(BLACK)
-            layoutParams = FrameLayout.LayoutParams(0, trackH)
-        }
-        row.addView(FrameLayout(context).apply {
-            layoutParams = LinearLayout.LayoutParams(0, trackH, 1f).apply {
-                marginStart = (8 * dp).toInt(); marginEnd = (8 * dp).toInt()
-            }
-            background = GradientDrawable().apply {
-                cornerRadius = trackH / 2f; setStroke(borderW, BLACK); setColor(WHITE)
-            }
-            addView(fill)
-        })
-        val valueText = TextView(context).apply {
-            setTextColor(BLACK); textSize = baseTinySize
-            minWidth = (58 * dp).toInt()
-            gravity = Gravity.END
-        }
-        row.addView(valueText)
-
-        liveMemoryText = valueText
-        liveMemoryFill = fill
-        updateMemoryReadout(context)
-        startMemoryUpdates(context)
-        return row
-    }
-
-    /**
-     * Refresh the memory figures in place.
-     *
-     * Only the number and the bar width change — rebuilding the panel to show a new value would
-     * cost a full e-ink redraw every few seconds.
-     */
-    private fun updateMemoryReadout(context: Context) {
-        val text = liveMemoryText ?: return
-        val info = android.app.ActivityManager.MemoryInfo()
-        try {
-            (context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager)
-                .getMemoryInfo(info)
-        } catch (_: Exception) { return }
-        val totalMb = info.totalMem / (1024 * 1024)
-        val usedMb = (info.totalMem - info.availMem) / (1024 * 1024)
-        text.text = String.format(
-            java.util.Locale.getDefault(), "%.1f / %.1f GB", usedMb / 1024f, totalMb / 1024f
-        )
-        liveMemoryFill?.let { fill ->
-            val track = fill.parent as? View ?: return@let
-            val width = track.width
-            if (width <= 0 || info.totalMem <= 0L) return@let
-            val fraction = usedMb.toFloat() / totalMb.toFloat()
-            fill.layoutParams = FrameLayout.LayoutParams(
-                (width * fraction).toInt().coerceIn(0, width), fill.height.coerceAtLeast(1)
-            )
-            fill.requestLayout()
-        }
-    }
-
-    /**
-     * Poll while the panel is open so the figure is live rather than frozen at the value it had
-     * when the panel was built. Deliberately slow: each update is a partial e-ink refresh.
-     */
-    private fun startMemoryUpdates(context: Context) {
-        stopMemoryUpdates()
-        val runnable = object : Runnable {
-            override fun run() {
-                if (panelView == null || liveMemoryText == null) { stopMemoryUpdates(); return }
-                updateMemoryReadout(context)
-                handler.postDelayed(this, MEMORY_REFRESH_MS)
-            }
-        }
-        memoryUpdateRunnable = runnable
-        handler.postDelayed(runnable, MEMORY_REFRESH_MS)
-    }
-
-    private fun stopMemoryUpdates() {
-        memoryUpdateRunnable?.let { handler.removeCallbacks(it) }
-        memoryUpdateRunnable = null
-    }
-
     /**
      * Long-press menu for a recent app: App info, or a best-effort stop.
      *
