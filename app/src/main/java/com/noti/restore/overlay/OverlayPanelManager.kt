@@ -1906,6 +1906,7 @@ object OverlayPanelManager {
                     )
                 })
                 setOnClickListener {
+                    tapFeedback(context)
                     MeinkController.setMode(mode)
                     handler.postDelayed({ buildAndShowPanel(context) }, 100)
                 }
@@ -2096,6 +2097,7 @@ object OverlayPanelManager {
             background = bgFor(startOn)
             setPadding((14 * dp).toInt(), (10 * dp).toInt(), (14 * dp).toInt(), (10 * dp).toInt())
             setOnClickListener {
+                tapFeedback(context)
                 val turningOn = !isAdaptiveBrightnessOn(resolver)
                 try {
                     Settings.System.putInt(
