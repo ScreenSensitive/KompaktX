@@ -410,21 +410,16 @@ class RecentsButtonService : AccessibilityService() {
     }
 
     private fun performRecentsSingleTap() {
+        // The Recents button is only ours when it has been chosen as the panel trigger. In every
+        // other configuration a plain press must do whatever the button natively does, so we do
+        // nothing here rather than substituting an action the user never asked for.
+        //
+        // A double-tap shortcut is the one case that forces us to hold the first press back to
+        // see whether a second follows; if it turns out to be a single tap there is nothing to
+        // replay it with, so it is simply dropped. That is the cost of binding a double tap, and
+        // it is preferable to the button doing something unexpected.
         if (OverlayPanelManager.triggerMode == TriggerMode.RECENTS_BUTTON) {
             OverlayPanelManager.togglePanelFromService(this)
-            return
-        }
-        // Only reached when a double tap is bound, which forces us to hold the first tap back to
-        // see whether a second follows — so the press cannot be passed through and something has
-        // to stand in for it. The Kompakt ships no overview screen (dumpsys reports
-        // mRecentsComponent=null, which is also why KompaktX builds its own recents from
-        // UsageStats), so GLOBAL_ACTION_RECENTS is a no-op here; its Control Center is the system
-        // notification shade.
-        //
-        // Every other case passes the key straight through instead of substituting an action the
-        // user never asked for.
-        if (!performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)) {
-            performGlobalAction(GLOBAL_ACTION_RECENTS)
         }
     }
 

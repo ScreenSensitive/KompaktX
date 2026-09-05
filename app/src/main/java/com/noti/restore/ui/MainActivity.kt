@@ -114,7 +114,6 @@ fun KompaktXApp() {
     val hasAccessibility = remember(tick) { RecentsButtonService.isRunning }
     val hasBatteryOptExemption = remember(tick) { isIgnoringBatteryOptimizations(context) }
     val hasWriteSettings = remember(tick) { Settings.System.canWrite(context) }
-    val isServiceRunning = remember(tick) { KompaktXListener.isEnabled() }
 
     val headsUpEnabled by prefs.headsUpEnabled.collectAsState(initial = true)
     val recentAppsEnabled by prefs.recentAppsEnabled.collectAsState(initial = true)
@@ -224,33 +223,10 @@ fun KompaktXApp() {
     ) {
         Text("KompaktX", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = FG)
         Text(
-            "Extended features for Mudita Kompakt",
+            getTriggerDescription(triggerMode),
             fontSize = 14.sp, color = FG,
-            modifier = Modifier.padding(bottom = 20.dp)
+            modifier = Modifier.padding(top = 2.dp, bottom = 20.dp)
         )
-
-        // Status
-        val statusText = if (allPermissionsGranted && isServiceRunning) "Active" else "Setup Required"
-        val statusIcon = if (allPermissionsGranted && isServiceRunning) Icons.Default.CheckCircle else Icons.Default.Warning
-        SettingsCard {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(statusIcon, null, tint = FG, modifier = Modifier.size(32.dp))
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(statusText, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = FG)
-                    Text(
-                        if (allPermissionsGranted && isServiceRunning) getTriggerDescription(triggerMode)
-                        else "Grant permissions below to get started",
-                        fontSize = 12.sp, color = FG
-                    )
-                }
-            }
-        }
-
-        Spacer(Modifier.height(20.dp))
 
         // Permissions — always present, so you can see what you have granted and revoke it, not
         // only what is still outstanding. Collapsed to a count once everything is in place;

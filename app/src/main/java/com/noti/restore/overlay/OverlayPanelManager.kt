@@ -615,20 +615,21 @@ object OverlayPanelManager {
             panelCard.addView(makeThinDivider(context, dp))
         }
         panelCard.addView(tabContent)
+        val showInlineRecents = recentAppsEnabled && recentsLayoutMode == RecentsLayoutMode.INLINE
         if (placeTabsAtBottom) {
-            panelCard.addView(makeThinDivider(context, dp))
-            // Sitting flush against the bottom edge, the strip needs more room beneath it than it
-            // does under content at the top — both to clear the system navigation area and so the
-            // pills don't read as falling off the panel.
+            // The inline recents row below brings its own rule, so a second one directly above the
+            // strip would put two hairlines within a few dp of each other.
+            if (!showInlineRecents) panelCard.addView(makeThinDivider(context, dp))
+            // A little more room beneath than above, so the pills don't read as falling off the
+            // bottom edge of the panel.
             tabBar.setPadding(
                 tabBar.paddingLeft, tabBar.paddingTop,
-                tabBar.paddingRight, (16 * dp).toInt()
+                tabBar.paddingRight, (8 * dp).toInt()
             )
             panelCard.addView(tabBar)
         }
 
         // ── Bottom bar: recents (inline layout only) ──
-        val showInlineRecents = recentAppsEnabled && recentsLayoutMode == RecentsLayoutMode.INLINE
         if (showInlineRecents) {
             panelCard.addView(makeThinDivider(context, dp).apply {
                 (layoutParams as? LinearLayout.LayoutParams)?.topMargin = (4 * dp).toInt()
@@ -780,7 +781,10 @@ object OverlayPanelManager {
                 settingsContent.addView(buildSettingsGrid(context, dp, borderW))
                 settingsContent.addView(buildBrightnessSection(context, dp))
                 settingsContent.addView(buildAdaptiveBrightnessToggle(context, dp, borderW))
-                if (MeinkController.isAvailable) {
+                // Honour the user's toggle, not just hardware availability — einkControlsEnabled
+                // was being set from settings and then never read, so switching it off left the
+                // refresh controls on the panel.
+                if (einkControlsEnabled && MeinkController.isAvailable) {
                     settingsContent.addView(buildRefreshModeCircles(context, dp, borderW))
                 }
                 settingsScroll.addView(settingsContent)
