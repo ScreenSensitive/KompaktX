@@ -168,6 +168,8 @@ fun KompaktXApp() {
     val shortcutEinkRefresh by prefs.shortcutEinkRefresh.collectAsState(initial = ShortcutTrigger.NONE)
     val shortcutRefreshCycle by prefs.shortcutRefreshCycle.collectAsState(initial = ShortcutTrigger.NONE)
     val volumeLongPressMedia by prefs.volumeLongPressMedia.collectAsState(initial = false)
+    val serviceEnabled by prefs.serviceEnabled.collectAsState(initial = true)
+    val autoStart by prefs.autoStart.collectAsState(initial = true)
 
     LaunchedEffect(headsUpEnabled) { OverlayPanelManager.headsUpEnabled = headsUpEnabled }
     LaunchedEffect(recentAppsEnabled) { OverlayPanelManager.recentAppsEnabled = recentAppsEnabled }
@@ -194,10 +196,16 @@ fun KompaktXApp() {
     val allPermissionsGranted = hasOverlayPermission && hasNotificationAccess
     val allRequiredGranted = allPermissionsGranted && hasUsageAccess && hasAccessibility && hasBatteryOptExemption && hasWriteSettings
 
-    LaunchedEffect(allPermissionsGranted) {
-        if (allPermissionsGranted) {
-            try { context.startForegroundService(Intent(context, OverlayService::class.java)) } catch (_: Exception) {}
-        }
+    // Start or stop the overlay service to match the master switch. Stopping it tears the
+    // overlay down through OverlayService.onDestroy, so nothing is left drawn.
+    LaunchedEffect(allPermissionsGranted, serviceEnabled) {
+        try {
+            if (allPermissionsGranted && serviceEnabled) {
+                context.startForegroundService(Intent(context, OverlayService::class.java))
+            } else if (!serviceEnabled) {
+                context.stopService(Intent(context, OverlayService::class.java))
+            }
+        } catch (_: Exception) {}
     }
 
     // Track which settings section is expanded
@@ -227,6 +235,27 @@ fun KompaktXApp() {
             fontSize = 14.sp, color = FG,
             modifier = Modifier.padding(top = 2.dp, bottom = 20.dp)
         )
+
+        // Master switch first: it governs everything below it, so it reads oddly anywhere else.
+        SettingsCard {
+            ToggleRow(
+                "KompaktX",
+                if (serviceEnabled) "Overlay and shortcuts are running"
+                else "Everything is off — nothing is drawn or intercepted",
+                Icons.Default.PowerSettingsNew, serviceEnabled
+            ) { scope.launch { prefs.setServiceEnabled(it) } }
+            if (serviceEnabled) {
+                Divider(color = FG, thickness = 1.dp)
+                ToggleRow(
+                    "Start on Boot",
+                    if (autoStart) "Comes back automatically after a restart"
+                    else "Stays off until you open this app",
+                    Icons.Default.RestartAlt, autoStart
+                ) { scope.launch { prefs.setAutoStart(it) } }
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
 
         // Permissions — always present, so you can see what you have granted and revoke it, not
         // only what is still outstanding. Collapsed to a count once everything is in place;
