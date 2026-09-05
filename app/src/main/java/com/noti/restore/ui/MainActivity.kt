@@ -720,9 +720,35 @@ private fun LocationToggleScreen(
                 if (!granted) {
                     Spacer(Modifier.height(14.dp))
                     Text("From a computer", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = FG)
-                    Text(command, fontSize = 11.sp, color = FG,
-                        modifier = Modifier.padding(top = 4.dp)
-                            .border(1.dp, BORDER, RoundedCornerShape(6.dp)).padding(8.dp))
+                    // The command itself is the button — a separate "copy" control next to a
+                    // block of text you obviously want to copy is one thing too many on a
+                    // screen this narrow.
+                    Column(
+                        modifier = Modifier.fillMaxWidth()
+                            .padding(top = 6.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .border(1.dp, BORDER, RoundedCornerShape(6.dp))
+                            .clickable {
+                                val clip = context.getSystemService(android.content.ClipboardManager::class.java)
+                                clip?.setPrimaryClip(
+                                    android.content.ClipData.newPlainText("adb command", command)
+                                )
+                                Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+                            }
+                            .padding(10.dp)
+                    ) {
+                        Text(command, fontSize = 11.sp, color = FG)
+                        Row(
+                            modifier = Modifier.padding(top = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.ContentCopy, null, tint = FG,
+                                modifier = Modifier.size(12.dp))
+                            Spacer(Modifier.width(5.dp))
+                            Text("Tap to copy", fontSize = 10.sp, color = FG,
+                                fontWeight = FontWeight.Bold)
+                        }
+                    }
                     Spacer(Modifier.height(14.dp))
                     Text("Without a computer", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = FG)
                     Text(
@@ -730,25 +756,6 @@ private fun LocationToggleScreen(
                             "adb app such as LADB to pair with this phone and run the same command.",
                         fontSize = 12.sp, color = FG, modifier = Modifier.padding(top = 4.dp)
                     )
-                    Spacer(Modifier.height(12.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth()
-                            .clickable {
-                                val clip = context.getSystemService(android.content.ClipboardManager::class.java)
-                                clip?.setPrimaryClip(
-                                    android.content.ClipData.newPlainText("adb command", command)
-                                )
-                                Toast.makeText(context, "Command copied", Toast.LENGTH_SHORT).show()
-                            }
-                            .border(2.dp, BORDER, RoundedCornerShape(8.dp))
-                            .heightIn(min = 44.dp).padding(horizontal = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        Icon(Icons.Default.ContentCopy, null, tint = FG, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Copy command", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = FG)
-                    }
                     Spacer(Modifier.height(10.dp))
                     Text(
                         "This screen updates on its own once the permission is granted.",
