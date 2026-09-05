@@ -191,8 +191,10 @@ class RecentsButtonService : AccessibilityService() {
 
         when (event.keyCode) {
             KeyEvent.KEYCODE_APP_SWITCH -> {
-                // Always use advanced handling when any customization is active — this
-                // consumes ACTION_DOWN immediately so the system never fires its own recents
+                // Only take the button when something is actually bound to it. A short press with
+                // just a long-press shortcut assigned must still do whatever the button normally
+                // does — see handleRecentsAdvanced, which passes those events straight through
+                // rather than substituting an action the user never chose.
                 if (OverlayPanelManager.triggerMode == TriggerMode.RECENTS_BUTTON ||
                     longPressRecentsAction.isNotEmpty() || doubleTapRecentsAction.isNotEmpty()) {
                     return handleRecentsAdvanced(event)
@@ -239,6 +241,14 @@ class RecentsButtonService : AccessibilityService() {
      * - Single tap → toggle panel / open recents
      */
     private fun handleRecentsAdvanced(event: KeyEvent): Boolean {
+        // We only need to swallow the key when we might act on it ourselves. If the button is the
+        // panel trigger, or a double tap is bound (which forces us to hold the first tap back to
+        // see whether a second arrives), we own the event. Otherwise — the common case of a
+        // long-press shortcut and nothing else — the press is passed through so a short press
+        // still does whatever the button natively does.
+        val ownsButton = OverlayPanelManager.triggerMode == TriggerMode.RECENTS_BUTTON ||
+            doubleTapRecentsAction.isNotEmpty()
+
         when (event.action) {
             KeyEvent.ACTION_DOWN -> {
                 recentsLongPressed = false
@@ -251,7 +261,7 @@ class RecentsButtonService : AccessibilityService() {
                     }
                     handler.postDelayed(recentsLongPressRunnable!!, LONG_PRESS_DELAY)
                 }
-                return true
+                return ownsButton
             }
             KeyEvent.ACTION_UP -> {
                 recentsLongPressRunnable?.let { handler.removeCallbacks(it) }
@@ -282,10 +292,12 @@ class RecentsButtonService : AccessibilityService() {
                         performRecentsSingleTap()
                     }
                     handler.postDelayed(recentsSingleTapRunnable!!, DOUBLE_TAP_TIMEOUT)
-                } else {
+                } else if (ownsButton) {
                     performRecentsSingleTap()
                 }
-                return true
+                // When we don't own the button, report the press as unhandled so the system does
+                // whatever it normally would with it.
+                return ownsButton
             }
         }
         return true
@@ -402,15 +414,15 @@ class RecentsButtonService : AccessibilityService() {
             OverlayPanelManager.togglePanelFromService(this)
             return
         }
-        // Issue #2: assigning ANY Recents shortcut makes onKeyEvent() route every APP_SWITCH
-        // through handleRecentsAdvanced(), which always consumes the event — so the stock button
-        // behaviour has to be reproduced here. It used to call GLOBAL_ACTION_RECENTS, but the
-        // Kompakt ships no overview/recents screen at all (dumpsys reports mRecentsComponent=null,
-        // which is also why KompaktX builds its own recents list from UsageStats). That made the
-        // call a silent no-op and the button appear dead the moment a shortcut was assigned.
+        // Only reached when a double tap is bound, which forces us to hold the first tap back to
+        // see whether a second follows — so the press cannot be passed through and something has
+        // to stand in for it. The Kompakt ships no overview screen (dumpsys reports
+        // mRecentsComponent=null, which is also why KompaktX builds its own recents from
+        // UsageStats), so GLOBAL_ACTION_RECENTS is a no-op here; its Control Center is the system
+        // notification shade.
         //
-        // The Kompakt's Control Center is the system notification shade, so open that instead,
-        // and only fall back to the overview action on a device that actually has one.
+        // Every other case passes the key straight through instead of substituting an action the
+        // user never asked for.
         if (!performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)) {
             performGlobalAction(GLOBAL_ACTION_RECENTS)
         }

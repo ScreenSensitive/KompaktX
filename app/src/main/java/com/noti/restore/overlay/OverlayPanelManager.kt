@@ -208,7 +208,7 @@ object OverlayPanelManager {
                     width = (16 * dp).toInt(), height = (80 * dp).toInt(),
                     gravityH = Gravity.START, gravityV = Gravity.TOP, yPos = 0
                 ) { event ->
-                    handleHorizontalSwipe(event, swipeThresholdPx, swipeRight = true) { showPanel(context) }
+                    handleHorizontalSwipe(event, swipeThresholdPx, swipeRight = true) { togglePanel(context) }
                 }
             }
             TriggerMode.SWIPE_RIGHT_EDGE -> {
@@ -216,7 +216,7 @@ object OverlayPanelManager {
                     width = (16 * dp).toInt(), height = (80 * dp).toInt(),
                     gravityH = Gravity.END, gravityV = Gravity.TOP, yPos = 0
                 ) { event ->
-                    handleHorizontalSwipe(event, swipeThresholdPx, swipeRight = false) { showPanel(context) }
+                    handleHorizontalSwipe(event, swipeThresholdPx, swipeRight = false) { togglePanel(context) }
                 }
             }
             TriggerMode.PULL_UP_BOTTOM_RIGHT -> {
@@ -224,7 +224,7 @@ object OverlayPanelManager {
                     width = (80 * dp).toInt(), height = (16 * dp).toInt(),
                     gravityH = Gravity.END, gravityV = Gravity.BOTTOM, yPos = 0
                 ) { event ->
-                    handleVerticalSwipe(event, swipeThresholdPx, swipeUp = true) { showPanel(context) }
+                    handleVerticalSwipe(event, swipeThresholdPx, swipeUp = true) { togglePanel(context) }
                 }
             }
             TriggerMode.PULL_UP_BOTTOM_LEFT -> {
@@ -232,7 +232,7 @@ object OverlayPanelManager {
                     width = (80 * dp).toInt(), height = (16 * dp).toInt(),
                     gravityH = Gravity.START, gravityV = Gravity.BOTTOM, yPos = 0
                 ) { event ->
-                    handleVerticalSwipe(event, swipeThresholdPx, swipeUp = true) { showPanel(context) }
+                    handleVerticalSwipe(event, swipeThresholdPx, swipeUp = true) { togglePanel(context) }
                 }
             }
         }
@@ -410,6 +410,30 @@ object OverlayPanelManager {
     private val TAB_SETTINGS = 2
     private var panelTab = TAB_NOTIFICATIONS
 
+    /**
+     * The trigger gesture is a toggle: the same swipe that opened the panel closes it again.
+     *
+     * For that to work while the panel is up, the edge strip has to sit above it — the panel
+     * window is added later and would otherwise be on top and swallow the gesture. See
+     * [bringTouchStripToFront].
+     */
+    private fun togglePanel(context: Context) {
+        if (panelView != null) dismissPanel() else showPanel(context)
+    }
+
+    /**
+     * Re-add the trigger strip so it sits above the panel window. Window z-order follows add
+     * order, so removing and re-adding is the only way to raise it after the panel appears.
+     */
+    private fun bringTouchStripToFront() {
+        val view = touchStripView ?: return
+        val lp = view.layoutParams as? WindowManager.LayoutParams ?: return
+        try {
+            windowManager?.removeView(view)
+            windowManager?.addView(view, lp)
+        } catch (_: Exception) {}
+    }
+
     private fun showPanel(context: Context) {
         if (panelView != null) return
 
@@ -478,12 +502,21 @@ object OverlayPanelManager {
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
                 windowType,
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                // NOT_FOCUSABLE matters as much as NOT_TOUCH_MODAL here. Without it this window
+                // takes input focus the moment it is added, and the first tap after it appears
+                // gets spent handing focus over rather than hitting what you aimed at — which is
+                // why a tab press sometimes only registered on the second try. Nothing in the
+                // panel takes text input (the reply box lives in the heads-up window), and BACK
+                // is handled by the accessibility service, so focus buys us nothing.
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
                 PixelFormat.TRANSLUCENT
             ).apply { gravity = Gravity.TOP }
 
             try {
                 windowManager?.addView(rootFrame, wlp)
+                // Keep the trigger gesture reachable so the same swipe can close the panel.
+                bringTouchStripToFront()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to show panel", e)
                 panelView = null
