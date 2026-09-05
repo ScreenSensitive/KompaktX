@@ -27,9 +27,6 @@
          The app works normally without it. -->
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"
         tools:ignore="ProtectedPermissions" />
-    <!-- Best-effort "Stop app" from the recents long-press menu. Normal permission; only reaps
-         background processes, so it is not a true force stop. -->
-    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Request exemption from battery optimization so the system doesn't kill the overlay service -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />

@@ -71,6 +71,12 @@ object OverlayPanelManager {
     private var headsUpView: View? = null
     private var headsUpParams: WindowManager.LayoutParams? = null
     private val handler = Handler(Looper.getMainLooper())
+
+    // Live memory readout, refreshed in place while the panel is open.
+    private var liveMemoryText: TextView? = null
+    private var liveMemoryFill: View? = null
+    private var memoryUpdateRunnable: Runnable? = null
+
     /** For preference writes made from the panel itself, e.g. the app long-press menu. */
     private val managerScope = kotlinx.coroutines.CoroutineScope(
         kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate
@@ -122,6 +128,9 @@ object OverlayPanelManager {
      * because the Kompakt's e-ink pipeline settles slowly after a wake.
      */
     private const val WAKE_RESTORE_GRACE_MS = 3000L
+
+    /** How often the panel's memory readout refreshes while it is open. */
+    private const val MEMORY_REFRESH_MS = 3000L
 
     /**
      * How long to keep asserting "off" after an unexplained brightness rise before concluding a
@@ -854,6 +863,9 @@ object OverlayPanelManager {
     }
 
     private fun dismissPanel() {
+        stopMemoryUpdates()
+        liveMemoryText = null
+        liveMemoryFill = null
         panelView?.let { view ->
             try { windowManager?.removeView(view) } catch (_: Exception) {}
         }
@@ -1700,18 +1712,12 @@ object OverlayPanelManager {
      * legible at a glance on a panel that has no colour to spend on it.
      */
     private fun buildMemoryRow(context: Context, dp: Float, borderW: Int): View {
-        val info = android.app.ActivityManager.MemoryInfo()
-        try {
-            (context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager)
-                .getMemoryInfo(info)
-        } catch (_: Exception) {}
-        val totalMb = info.totalMem / (1024 * 1024)
-        val usedMb = (info.totalMem - info.availMem) / (1024 * 1024)
-        val fraction = if (info.totalMem > 0) usedMb.toFloat() / totalMb.toFloat() else 0f
-
         val section = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, (8 * dp).toInt(), 0, (4 * dp).toInt())
+        }
+        val valueText = TextView(context).apply {
+            setTextColor(BLACK); textSize = baseTinySize
         }
         section.addView(LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1721,13 +1727,14 @@ object OverlayPanelManager {
                 setTextColor(BLACK); textSize = baseTinySize; typeface = Typeface.DEFAULT_BOLD
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             })
-            addView(TextView(context).apply {
-                text = "\u2009$usedMb / $totalMb MB"
-                setTextColor(BLACK); textSize = baseTinySize
-            })
+            addView(valueText)
         })
         // Track with a filled portion — same visual language as the brightness bar.
         val trackH = (8 * dp).toInt()
+        val fill = View(context).apply {
+            setBackgroundColor(BLACK)
+            layoutParams = FrameLayout.LayoutParams(0, trackH)
+        }
         section.addView(FrameLayout(context).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, trackH
@@ -1735,35 +1742,71 @@ object OverlayPanelManager {
             background = GradientDrawable().apply {
                 cornerRadius = trackH / 2f; setStroke(borderW, BLACK); setColor(WHITE)
             }
-            addView(View(context).apply {
-                setBackgroundColor(BLACK)
-                layoutParams = FrameLayout.LayoutParams(0, trackH).also { lp ->
-                    viewTreeObserver.addOnGlobalLayoutListener(
-                        object : ViewTreeObserver.OnGlobalLayoutListener {
-                            var done = false
-                            override fun onGlobalLayout() {
-                                if (done) return; done = true
-                                viewTreeObserver.removeOnGlobalLayoutListener(this)
-                                val parentW = (parent as? View)?.width ?: return
-                                lp.width = (parentW * fraction).toInt().coerceIn(0, parentW)
-                                requestLayout()
-                            }
-                        })
-                }
-            })
+            addView(fill)
         })
+
+        liveMemoryText = valueText
+        liveMemoryFill = fill
+        updateMemoryReadout(context)
+        startMemoryUpdates(context)
         return section
+    }
+
+    /**
+     * Refresh the memory figures in place.
+     *
+     * Only the number and the bar width change — rebuilding the panel to show a new value would
+     * cost a full e-ink redraw every few seconds.
+     */
+    private fun updateMemoryReadout(context: Context) {
+        val text = liveMemoryText ?: return
+        val info = android.app.ActivityManager.MemoryInfo()
+        try {
+            (context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager)
+                .getMemoryInfo(info)
+        } catch (_: Exception) { return }
+        val totalMb = info.totalMem / (1024 * 1024)
+        val usedMb = (info.totalMem - info.availMem) / (1024 * 1024)
+        text.text = "$usedMb / $totalMb MB"
+        liveMemoryFill?.let { fill ->
+            val track = fill.parent as? View ?: return@let
+            val width = track.width
+            if (width <= 0 || info.totalMem <= 0L) return@let
+            val fraction = usedMb.toFloat() / totalMb.toFloat()
+            fill.layoutParams = FrameLayout.LayoutParams(
+                (width * fraction).toInt().coerceIn(0, width), fill.height.coerceAtLeast(1)
+            )
+            fill.requestLayout()
+        }
+    }
+
+    /**
+     * Poll while the panel is open so the figure is live rather than frozen at the value it had
+     * when the panel was built. Deliberately slow: each update is a partial e-ink refresh.
+     */
+    private fun startMemoryUpdates(context: Context) {
+        stopMemoryUpdates()
+        val runnable = object : Runnable {
+            override fun run() {
+                if (panelView == null || liveMemoryText == null) { stopMemoryUpdates(); return }
+                updateMemoryReadout(context)
+                handler.postDelayed(this, MEMORY_REFRESH_MS)
+            }
+        }
+        memoryUpdateRunnable = runnable
+        handler.postDelayed(runnable, MEMORY_REFRESH_MS)
+    }
+
+    private fun stopMemoryUpdates() {
+        memoryUpdateRunnable?.let { handler.removeCallbacks(it) }
+        memoryUpdateRunnable = null
     }
 
     /**
      * Long-press menu for a recent app: App info, or a best-effort stop.
      *
-     * There is no public API to force-stop another app, and no intent that opens the system's
-     * force-stop confirmation directly. killBackgroundProcesses() is the closest thing available
-     * — it needs only the normal KILL_BACKGROUND_PROCESSES permission, but it only reaps
-     * background processes and the system is free to ignore it, so it is labelled as a stop
-     * rather than promising a kill. App info is where the real Force Stop button lives, so that
-     * option stays first.
+     * Offers App info and the two hide filters. Stopping an app is deliberately absent — see the
+     * comment on the actions below.
      *
      * Drawn inside the panel rather than as a system dialog: an overlay cannot show an AlertDialog
      * without a window of its own, and a second window here would flicker on e-ink.
@@ -1832,21 +1875,11 @@ object OverlayPanelManager {
             } catch (_: Exception) {}
         }
 
-        // killBackgroundProcesses only reaps *background* processes and the system may ignore it,
-        // so on its own it frequently appears to do nothing. Nothing stronger is available: a real
-        // force stop needs FORCE_STOP_PACKAGES, which is signature|privileged with no development
-        // flag, so unlike WRITE_SECURE_SETTINGS it cannot even be granted over adb, and the device
-        // has no root. So do the best-effort kill and then hand over to the one screen that has a
-        // working Force Stop button, rather than pretending the kill was enough.
-        action("Force stop", "Best effort, then opens App info to confirm") {
-            try {
-                (context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager)
-                    .killBackgroundProcesses(pkg)
-            } catch (_: Exception) {}
-            openAppInfo()
-            close(); dismissPanel()
-        }
-        action("App info", "Permissions, storage, notifications") {
+        // No stop action. killBackgroundProcesses() exempts the foreground app — the one you most
+        // want to stop — and a real force stop needs FORCE_STOP_PACKAGES, which is
+        // signature|privileged with no development flag, so unlike WRITE_SECURE_SETTINGS it cannot
+        // be granted over adb either. App info is where the button that actually works lives.
+        action("App info", "Permissions, storage, force stop") {
             openAppInfo(); close(); dismissPanel()
         }
         action(
