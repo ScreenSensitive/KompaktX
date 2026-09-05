@@ -2,7 +2,10 @@ package com.noti.restore.service
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.ComponentName
+import android.content.Context
 import android.media.AudioManager
+import android.provider.Settings
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -33,6 +36,28 @@ class RecentsButtonService : AccessibilityService() {
 
         @Volatile var isRunning = false
             private set
+
+        /**
+         * Whether the user has enabled this service in system settings.
+         *
+         * Distinct from [isRunning], which is an in-process flag set when the system binds us. The
+         * process dying resets that flag, and the system rebinds on its own schedule, so a
+         * force-stop made a still-granted service look revoked. The setting is the actual grant
+         * and outlives the process.
+         */
+        fun isAccessibilityGranted(context: Context): Boolean {
+            return try {
+                val enabled = Settings.Secure.getString(
+                    context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+                ) ?: return false
+                val expected = ComponentName(context, RecentsButtonService::class.java)
+                enabled.split(':').any { entry ->
+                    val trimmed = entry.trim()
+                    trimmed.equals(expected.flattenToString(), ignoreCase = true) ||
+                        trimmed.equals(expected.flattenToShortString(), ignoreCase = true)
+                }
+            } catch (_: Exception) { false }
+        }
         @Volatile private var instance: RecentsButtonService? = null
         @Volatile var currentForegroundPackage = ""
 

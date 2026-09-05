@@ -117,7 +117,9 @@ fun KompaktXApp() {
     val hasOverlayPermission = remember(tick) { Settings.canDrawOverlays(context) }
     val hasNotificationAccess = remember(tick) { KompaktXListener.isNotificationAccessGranted(context) }
     val hasUsageAccess = remember(tick) { hasUsageStatsPermission(context) }
-    val hasAccessibility = remember(tick) { RecentsButtonService.isRunning }
+    // The system grant, not whether the service happens to be bound right now — a force-stop
+    // clears the in-process flag while the permission itself is untouched.
+    val hasAccessibility = remember(tick) { RecentsButtonService.isAccessibilityGranted(context) }
     val hasBatteryOptExemption = remember(tick) { isIgnoringBatteryOptimizations(context) }
     val hasWriteSettings = remember(tick) { Settings.System.canWrite(context) }
 
