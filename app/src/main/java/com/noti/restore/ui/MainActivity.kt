@@ -106,6 +106,10 @@ fun KompaktXApp() {
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            // Re-check the moment we come back to the foreground, which is exactly when the user
+            // returns from granting something. Waiting for the next poll tick made a freshly
+            // granted permission show as missing for up to two seconds.
+            tick++
             while (true) { delay(2000); tick++ }
         }
     }
