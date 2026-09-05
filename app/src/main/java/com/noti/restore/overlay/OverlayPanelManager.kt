@@ -673,6 +673,8 @@ object OverlayPanelManager {
         val tabContainer = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            // Inset so the selected fill sits inside the outline instead of running into it.
+            setPadding((3 * dp).toInt(), (3 * dp).toInt(), (3 * dp).toInt(), (3 * dp).toInt())
             background = GradientDrawable().apply {
                 cornerRadius = 100 * dp; setStroke(borderW, BLACK); setColor(WHITE)
             }
@@ -683,11 +685,10 @@ object OverlayPanelManager {
                 cornerRadius = 100 * dp
                 if (selected) setColor(BLACK) else setColor(0x00000000)
             }
-            // The pill keeps its compact look, but the thing that receives the touch is a taller
-            // wrapper around it. Sizing the target with padding alone tied hitbox to appearance
-            // and left the pills ~6 mm tall — under the ~7 mm needed to hit reliably, which is why
-            // presses sometimes didn't register. The wrapper also absorbs taps in the gaps
-            // between pills, so a near-miss still selects a tab instead of doing nothing.
+            // Touch target and pill size are deliberately separated. The wrapper is 44dp tall so
+            // presses register (~7mm at this density) and taps between pills still land on a tab;
+            // the pill inside is inset from it, so the fill keeps clear of the container outline
+            // rather than butting against it.
             val tabLabel = TextView(context).apply {
                 text = label
                 setTextColor(if (selected) WHITE else BLACK)
@@ -696,14 +697,14 @@ object OverlayPanelManager {
                 setPadding((16 * dp).toInt(), 0, (16 * dp).toInt(), 0)
             }
             tabContainer.addView(FrameLayout(context).apply {
-                minimumHeight = (46 * dp).toInt()
-                // The pill fills the wrapper's height so the selected tab's fill spans the whole
-                // strip. Sizing it to its text left a band of container showing above and below,
-                // which is what made the selection look like it didn't reach the outline.
+                minimumHeight = (44 * dp).toInt()
                 addView(tabLabel, FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.WRAP_CONTENT,
                     FrameLayout.LayoutParams.MATCH_PARENT
-                ).apply { gravity = Gravity.CENTER })
+                ).apply {
+                    gravity = Gravity.CENTER
+                    topMargin = (4 * dp).toInt(); bottomMargin = (4 * dp).toInt()
+                })
                 isClickable = true
                 setOnClickListener {
                     if (panelTab != tabId) { panelTab = tabId; buildAndShowPanel(context) }
