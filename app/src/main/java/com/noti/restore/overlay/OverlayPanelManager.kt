@@ -72,6 +72,8 @@ object OverlayPanelManager {
     private var panelContentView: ViewGroup? = null  // The inner LinearLayout we swap content in
     private var headsUpView: View? = null
     private var headsUpParams: WindowManager.LayoutParams? = null
+    private val headsUpQueue = ArrayDeque<NotificationPopupData>()
+    private var headsUpShowingKey: String? = null
     private val handler = Handler(Looper.getMainLooper())
 
     /** For preference writes made from the panel itself, e.g. the app long-press menu. */
@@ -100,6 +102,13 @@ object OverlayPanelManager {
     var hapticsEnabled = true
     /** How long a heads-up popup stays on screen, in milliseconds. */
     var headsUpDurationMs = 5000L
+    /**
+     * Hold popups back and show them one at a time, instead of the newest taking the screen.
+     *
+     * Off by default because replacing is what Android itself does; queueing suits a slow display
+     * where a popup that only flashes for a moment may never actually be read.
+     */
+    var headsUpQueueMode = false
     var showLocationToggle = false
     var hiddenNotiApps: Set<String> = emptySet()
     var hiddenRecentApps: Set<String> = emptySet()
@@ -131,6 +140,9 @@ object OverlayPanelManager {
 
     /** How often the panel header's clock and battery re-read while the panel is open. */
     private const val CLOCK_REFRESH_MS = 60_000L
+
+    /** Popups held back at once. Beyond this the oldest is dropped rather than shown very late. */
+    private const val HEADS_UP_QUEUE_MAX = 5
 
     /**
      * How long to keep asserting "off" after an unexplained brightness rise before concluding a
@@ -2647,9 +2659,23 @@ object OverlayPanelManager {
         if (isPanelShowing) return
         if (!android.provider.Settings.canDrawOverlays(context)) return
         handler.post {
-            // Newest wins, matching how Android's own heads-up behaves: an arriving notification
-            // takes the screen straight away rather than waiting behind whatever is showing.
-            removeHeadsUp(); replyBoxOpen = false
+            // A repeat of something already showing or waiting replaces that entry rather than
+            // appearing twice — messaging apps re-post the same key on every new message.
+            headsUpQueue.removeAll { it.key == data.key }
+            if (headsUpQueueMode && headsUpShowingKey != null && headsUpShowingKey != data.key) {
+                headsUpQueue.addLast(data)
+                while (headsUpQueue.size > HEADS_UP_QUEUE_MAX) headsUpQueue.removeFirst()
+                return@post
+            }
+            showHeadsUpNow(context, data)
+        }
+    }
+
+    /** Put a popup on screen immediately, replacing whatever is there. */
+    private fun showHeadsUpNow(context: Context, data: NotificationPopupData) {
+        handler.post {
+            removeHeadsUp(advanceQueue = false); replyBoxOpen = false
+            headsUpShowingKey = data.key
             try {
                 if (windowManager == null) windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
                 val dp = context.resources.displayMetrics.density
@@ -2845,13 +2871,20 @@ object OverlayPanelManager {
         headsUpUpdate(v, p)
     }
 
-    private fun removeHeadsUp() {
+    private fun removeHeadsUp(advanceQueue: Boolean = true) {
         cancelDismissTimer(); replyBoxOpen = false
         headsUpView?.let {
             if (headsUpUsingAccessibility) com.noti.restore.service.RecentsButtonService.removeHeadsUp(it)
             else try { windowManager?.removeView(it) } catch (_: Exception) {}
         }
         headsUpView = null; headsUpParams = null; headsUpUsingAccessibility = false
+        headsUpShowingKey = null
+        if (advanceQueue && headsUpQueueMode) {
+            val next = headsUpQueue.removeFirstOrNull()
+            if (next != null && !isPanelShowing) {
+                stripContext?.let { ctx -> handler.post { showHeadsUpNow(ctx, next) } }
+            }
+        }
     }
 
     private fun startDismissTimer() {
