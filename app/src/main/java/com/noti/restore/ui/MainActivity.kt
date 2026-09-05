@@ -244,11 +244,7 @@ fun KompaktXApp() {
             .padding(16.dp)
     ) {
         Text("KompaktX", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = FG)
-        Text(
-            getTriggerDescription(triggerMode),
-            fontSize = 14.sp, color = FG,
-            modifier = Modifier.padding(top = 2.dp, bottom = 20.dp)
-        )
+        Spacer(Modifier.height(20.dp))
 
         SettingsCard {
             ToggleRow(
@@ -768,14 +764,6 @@ private fun LocationToggleScreen(
     }
 }
 
-private fun getTriggerDescription(mode: Int): String = when (mode) {
-    TriggerMode.SWIPE_LEFT_EDGE -> "Swipe right from the top-left edge"
-    TriggerMode.SWIPE_RIGHT_EDGE -> "Swipe left from the top-right edge"
-    TriggerMode.PULL_UP_BOTTOM_RIGHT -> "Pull up from the bottom-right edge"
-    TriggerMode.PULL_UP_BOTTOM_LEFT -> "Pull up from the bottom-left edge"
-    TriggerMode.RECENTS_BUTTON -> "Press the Recents button"
-    else -> "Swipe to open panel"
-}
 
 @Composable
 private fun SectionHeader(text: String) {
