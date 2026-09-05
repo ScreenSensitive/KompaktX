@@ -101,6 +101,7 @@ class OverlayService : Service() {
         watch(prefs.fontSizeOffset) { OverlayPanelManager.fontSizeOffset = it }
         watch(prefs.einkControlsEnabled) { OverlayPanelManager.einkControlsEnabled = it }
         watch(prefs.hapticsEnabled) { OverlayPanelManager.hapticsEnabled = it }
+        watch(prefs.headsUpDuration) { OverlayPanelManager.headsUpDurationMs = it.toLong() }
         watch(prefs.showLocationToggle) { OverlayPanelManager.showLocationToggle = it }
         watch(prefs.hiddenRecentApps) { OverlayPanelManager.hiddenRecentApps = it }
         watch(prefs.hiddenNotiApps) {

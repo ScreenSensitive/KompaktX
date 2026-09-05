@@ -98,6 +98,8 @@ object OverlayPanelManager {
     var fontSizeOffset = 0
     var einkControlsEnabled = false
     var hapticsEnabled = true
+    /** How long a heads-up popup stays on screen, in milliseconds. */
+    var headsUpDurationMs = 5000L
     var showLocationToggle = false
     var hiddenNotiApps: Set<String> = emptySet()
     var hiddenRecentApps: Set<String> = emptySet()
@@ -2645,6 +2647,8 @@ object OverlayPanelManager {
         if (isPanelShowing) return
         if (!android.provider.Settings.canDrawOverlays(context)) return
         handler.post {
+            // Newest wins, matching how Android's own heads-up behaves: an arriving notification
+            // takes the screen straight away rather than waiting behind whatever is showing.
             removeHeadsUp(); replyBoxOpen = false
             try {
                 if (windowManager == null) windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -2852,7 +2856,7 @@ object OverlayPanelManager {
 
     private fun startDismissTimer() {
         cancelDismissTimer(); dismissRunnable = Runnable { removeHeadsUp() }
-        handler.postDelayed(dismissRunnable!!, 5000L)
+        handler.postDelayed(dismissRunnable!!, headsUpDurationMs)
     }
     private fun resetDismissTimer() { if (!replyBoxOpen) startDismissTimer() }
     private fun cancelDismissTimer() { dismissRunnable?.let { handler.removeCallbacks(it) }; dismissRunnable = null }

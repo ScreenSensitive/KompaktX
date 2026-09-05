@@ -172,6 +172,20 @@ fun KompaktXApp() {
     val volumeLongPressMedia by prefs.volumeLongPressMedia.collectAsState(initial = false)
     val autoStart by prefs.autoStart.collectAsState(initial = true)
     val hapticsEnabled by prefs.hapticsEnabled.collectAsState(initial = true)
+    val headsUpDuration by prefs.headsUpDuration.collectAsState(initial = 5000)
+    var showHeadsUpPage by remember { mutableStateOf(false) }
+    BackHandler(enabled = showHeadsUpPage) { showHeadsUpPage = false }
+
+    if (showHeadsUpPage) {
+        HeadsUpScreen(
+            enabled = headsUpEnabled,
+            durationMs = headsUpDuration,
+            onToggle = { scope.launch { prefs.setHeadsUpEnabled(it) } },
+            onDuration = { scope.launch { prefs.setHeadsUpDuration(it) } },
+            onBack = { showHeadsUpPage = false }
+        )
+        return
+    }
     val showLocationToggle by prefs.showLocationToggle.collectAsState(initial = false)
     // Re-checked on the status tick so granting it over adb takes effect without a restart.
     val hasSecureSettings = remember(tick) {
@@ -356,9 +370,24 @@ fun KompaktXApp() {
         // Feature Toggles
         SectionHeader("Features")
         SettingsCard {
-            ToggleRow("Heads-Up Notifications", "Show popup for new notifications",
-                Icons.Default.NotificationsActive, headsUpEnabled
-            ) { scope.launch { prefs.setHeadsUpEnabled(it) } }
+            Row(
+                modifier = Modifier.fillMaxWidth()
+                    .clickable { showHeadsUpPage = true }
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.NotificationsActive, null, tint = FG, modifier = Modifier.size(24.dp))
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Notification Popups", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = FG)
+                    Text(
+                        if (headsUpEnabled) "On · ${headsUpDuration / 1000}s on screen"
+                        else "Off",
+                        fontSize = 12.sp, color = FG
+                    )
+                }
+                Icon(Icons.Default.ChevronRight, null, tint = FG, modifier = Modifier.size(20.dp))
+            }
             Divider(color = FG, thickness = 1.dp)
             ToggleRow("Recent Apps", "Show recently used apps in panel",
                 Icons.Default.Apps, recentAppsEnabled
@@ -626,6 +655,84 @@ fun KompaktXApp() {
                 .padding(top = 6.dp)
         )
 
+        Spacer(Modifier.height(32.dp))
+    }
+}
+
+/** Notification popup settings: whether they appear, and how long they stay. */
+@Composable
+private fun HeadsUpScreen(
+    enabled: Boolean,
+    durationMs: Int,
+    onToggle: (Boolean) -> Unit,
+    onDuration: (Int) -> Unit,
+    onBack: () -> Unit
+) {
+    Column(
+        Modifier.fillMaxSize().background(BG).verticalScroll(rememberScrollState()).padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable(onClick = onBack).heightIn(min = 44.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.ChevronLeft, null, tint = FG, modifier = Modifier.size(22.dp))
+            Text("Back", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = FG)
+        }
+        Spacer(Modifier.height(12.dp))
+        Text("Notification Popups", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = FG)
+        Text(
+            "A popup appears at the top of the screen when a notification arrives.",
+            fontSize = 13.sp, color = FG, modifier = Modifier.padding(top = 4.dp, bottom = 18.dp)
+        )
+
+        SettingsCard {
+            ToggleRow("Show Popups", "Appear over whatever you are using",
+                Icons.Default.NotificationsActive, enabled) { onToggle(it) }
+        }
+
+        if (enabled) {
+            Spacer(Modifier.height(20.dp))
+            SectionHeader("Time on screen")
+            SettingsCard {
+                Column(Modifier.padding(12.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(2000 to "2s", 3000 to "3s", 5000 to "5s", 8000 to "8s", 10000 to "10s")
+                            .forEach { (ms, label) ->
+                                val selected = durationMs == ms
+                                Box(
+                                    modifier = Modifier.weight(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .border(2.dp, FG, RoundedCornerShape(8.dp))
+                                        .then(
+                                            if (selected) Modifier.background(FG, RoundedCornerShape(8.dp))
+                                            else Modifier
+                                        )
+                                        .clickable { onDuration(ms) }
+                                        .heightIn(min = 44.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(label, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                                        color = if (selected) BG else FG)
+                                }
+                            }
+                    }
+                    Text(
+                        "Touching a popup pauses this, and opening the reply box stops it entirely.",
+                        fontSize = 12.sp, color = FG, modifier = Modifier.padding(top = 10.dp)
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+            SectionHeader("When several arrive at once")
+            SettingsCard {
+                Text(
+                    "The newest popup takes the screen straight away, the same as Android's own " +
+                        "notification popups. Earlier ones are not queued — they stay in the tray.",
+                    fontSize = 13.sp, color = FG, modifier = Modifier.padding(16.dp)
+                )
+            }
+        }
         Spacer(Modifier.height(32.dp))
     }
 }
