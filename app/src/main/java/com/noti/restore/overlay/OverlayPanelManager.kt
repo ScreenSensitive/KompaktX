@@ -1574,7 +1574,62 @@ object OverlayPanelManager {
             pillRow.addView(pillView)
         }
         grid.addView(pillRow)
+
+        // Straight into Android's own settings — the one destination the panel can't provide
+        // itself, and awkward to reach on a device with no app drawer shortcut for it.
+        val gearBg = GradientDrawable().apply {
+            cornerRadius = 12 * dp; setStroke(borderW, BLACK); setColor(WHITE)
+        }
+        grid.addView(LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            background = gearBg
+            setPadding((10 * dp).toInt(), (10 * dp).toInt(), (12 * dp).toInt(), (10 * dp).toInt())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            addView(ImageView(context).apply {
+                layoutParams = LinearLayout.LayoutParams((20 * dp).toInt(), (20 * dp).toInt())
+                    .apply { marginEnd = (8 * dp).toInt() }
+                setImageDrawable(BitmapDrawable(context.resources, drawGearIcon((20 * dp).toInt())))
+            })
+            addView(TextView(context).apply {
+                text = "System Settings"
+                setTextColor(BLACK); textSize = baseSmallSize; typeface = Typeface.DEFAULT_BOLD
+            })
+            setOnClickListener {
+                try {
+                    context.startActivity(
+                        Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                } catch (_: Exception) {}
+                dismissPanel()
+            }
+        })
         return grid
+    }
+
+    /** Simple gear glyph, drawn to match the panel's other 1-bit icons. */
+    private fun drawGearIcon(size: Int): Bitmap {
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = BLACK; style = Paint.Style.STROKE
+            strokeWidth = size * 0.11f; strokeCap = Paint.Cap.ROUND
+        }
+        val cx = size / 2f; val cy = size / 2f
+        val rOuter = size * 0.34f
+        canvas.drawCircle(cx, cy, size * 0.17f, paint)
+        // Eight teeth as short radial spokes.
+        for (i in 0 until 8) {
+            val a = Math.toRadians((i * 45).toDouble())
+            val sx = cx + (rOuter * 0.62f) * Math.cos(a).toFloat()
+            val sy = cy + (rOuter * 0.62f) * Math.sin(a).toFloat()
+            val ex = cx + rOuter * Math.cos(a).toFloat()
+            val ey = cy + rOuter * Math.sin(a).toFloat()
+            canvas.drawLine(sx, sy, ex, ey, paint)
+        }
+        return bmp
     }
 
     private fun buildRefreshModeCircles(context: Context, dp: Float, borderW: Int): View {

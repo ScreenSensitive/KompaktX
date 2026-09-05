@@ -22,14 +22,12 @@ class BootReceiver : BroadcastReceiver() {
         CoroutineScope(Dispatchers.Default).launch {
             try {
                 val prefs = PreferencesManager.getInstance(appContext)
-                val enabled = prefs.serviceEnabled.first()
                 val autoStart = prefs.autoStart.first()
-                if (enabled && autoStart) {
+                if (autoStart) {
                     appContext.startForegroundService(Intent(appContext, OverlayService::class.java))
                     Log.d("KompaktX", "Boot completed, overlay service started")
                 } else {
-                    Log.d("KompaktX", "Boot completed, not starting: " +
-                        "enabled=$enabled autoStart=$autoStart")
+                    Log.d("KompaktX", "Boot completed, Start on Boot is off — not starting")
                 }
             } catch (e: Exception) {
                 Log.e("KompaktX", "Failed to start overlay service on boot", e)
