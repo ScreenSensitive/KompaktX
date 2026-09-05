@@ -169,6 +169,7 @@ fun KompaktXApp() {
     val shortcutRefreshCycle by prefs.shortcutRefreshCycle.collectAsState(initial = ShortcutTrigger.NONE)
     val volumeLongPressMedia by prefs.volumeLongPressMedia.collectAsState(initial = false)
     val autoStart by prefs.autoStart.collectAsState(initial = true)
+    val showMemory by prefs.showMemory.collectAsState(initial = false)
 
     LaunchedEffect(headsUpEnabled) { OverlayPanelManager.headsUpEnabled = headsUpEnabled }
     LaunchedEffect(recentAppsEnabled) { OverlayPanelManager.recentAppsEnabled = recentAppsEnabled }
@@ -358,6 +359,10 @@ fun KompaktXApp() {
             ToggleRow("Hide App Icons", "Hide icons in recents and notifications",
                 Icons.Default.HideImage, hideAppIcons
             ) { scope.launch { prefs.setHideAppIcons(it) } }
+            Divider(color = FG, thickness = 1.dp)
+            ToggleRow("Show Memory Usage", "Used and total RAM in the panel's settings tab",
+                Icons.Default.Memory, showMemory
+            ) { scope.launch { prefs.setShowMemory(it) } }
             Divider(color = FG, thickness = 1.dp)
             ToggleRow("E-Ink Controls", if (MeinkController.isAvailable) "Show display mode buttons in panel" else "Not available on this device",
                 Icons.Default.Contrast, einkControlsEnabled

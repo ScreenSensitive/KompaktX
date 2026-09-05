@@ -89,6 +89,7 @@ object OverlayPanelManager {
     var triggerMode = TriggerMode.SWIPE_LEFT_EDGE
     var fontSizeOffset = 0
     var einkControlsEnabled = false
+    var showMemory = false
     var hiddenNotiApps: Set<String> = emptySet()
     var hiddenRecentApps: Set<String> = emptySet()
     var recentsLayoutMode: Int = RecentsLayoutMode.INLINE
@@ -784,6 +785,7 @@ object OverlayPanelManager {
                 // Honour the user's toggle, not just hardware availability — einkControlsEnabled
                 // was being set from settings and then never read, so switching it off left the
                 // refresh controls on the panel.
+                if (showMemory) settingsContent.addView(buildMemoryRow(context, dp, borderW))
                 if (einkControlsEnabled && MeinkController.isAvailable) {
                     settingsContent.addView(buildRefreshModeCircles(context, dp, borderW))
                 }
@@ -1313,6 +1315,28 @@ object OverlayPanelManager {
 
     // ─── Quick Toggle Icons (pure B/W Canvas) ──────────────────────
 
+    /** Map-pin glyph; struck through when location is off, matching the other toggle icons. */
+    private fun drawLocationIcon(size: Int, on: Boolean): Bitmap {
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = if (on) WHITE else BLACK
+            style = Paint.Style.STROKE
+            strokeWidth = size * 0.1f
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+        }
+        val cx = size / 2f
+        val headR = size * 0.22f
+        val headCy = size * 0.38f
+        canvas.drawCircle(cx, headCy, headR, paint)
+        // Tapered tail down to the point.
+        canvas.drawLine(cx - headR * 0.72f, headCy + headR * 0.72f, cx, size * 0.86f, paint)
+        canvas.drawLine(cx + headR * 0.72f, headCy + headR * 0.72f, cx, size * 0.86f, paint)
+        if (!on) canvas.drawLine(size * 0.16f, size * 0.16f, size * 0.84f, size * 0.84f, paint)
+        return bmp
+    }
+
     private fun drawWifiIcon(size: Int, on: Boolean): Bitmap {
         val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
@@ -1530,6 +1554,40 @@ object OverlayPanelManager {
             ))
         }
 
+        // Location. Toggling it needs WRITE_SECURE_SETTINGS, which is signature|privileged but
+        // carries the "development" flag — so it cannot be requested at runtime, yet CAN be
+        // granted over adb:
+        //     adb shell pm grant com.kompaktx.app android.permission.WRITE_SECURE_SETTINGS
+        // With it, this flips location directly. Without it, the write throws and we fall back to
+        // opening the system's location screen, which is the most any ordinary app can do.
+        val locationMgr = context.getSystemService(Context.LOCATION_SERVICE) as? android.location.LocationManager
+        if (locationMgr != null) {
+            fun locationOn(): Boolean = try { locationMgr.isLocationEnabled } catch (_: Exception) { false }
+            pills.add(PillItem("Location", locationOn(), drawLocationIcon(iconSize, locationOn()),
+                onTap = {
+                    val target = !locationOn()
+                    val wrote = try {
+                        Settings.Secure.putInt(
+                            context.contentResolver, Settings.Secure.LOCATION_MODE,
+                            if (target) Settings.Secure.LOCATION_MODE_HIGH_ACCURACY
+                            else Settings.Secure.LOCATION_MODE_OFF
+                        )
+                    } catch (_: Exception) { false }
+                    if (!wrote) {
+                        try {
+                            context.startActivity(
+                                Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                        } catch (_: Exception) {}
+                        dismissPanel()
+                    }
+                },
+                isOnAfterTap = { locationOn() },
+                drawIconForState = { st -> drawLocationIcon(iconSize, st) }
+            ))
+        }
+
         for ((idx, pill) in pills.withIndex()) {
             val iconView = ImageView(context).apply {
                 setImageDrawable(BitmapDrawable(context.resources, pill.icon))
@@ -1607,6 +1665,162 @@ object OverlayPanelManager {
             }
         })
         return grid
+    }
+
+    /**
+     * Used / total RAM, read straight from ActivityManager. Rendered as a labelled bar so it is
+     * legible at a glance on a panel that has no colour to spend on it.
+     */
+    private fun buildMemoryRow(context: Context, dp: Float, borderW: Int): View {
+        val info = android.app.ActivityManager.MemoryInfo()
+        try {
+            (context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager)
+                .getMemoryInfo(info)
+        } catch (_: Exception) {}
+        val totalMb = info.totalMem / (1024 * 1024)
+        val usedMb = (info.totalMem - info.availMem) / (1024 * 1024)
+        val fraction = if (info.totalMem > 0) usedMb.toFloat() / totalMb.toFloat() else 0f
+
+        val section = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, (8 * dp).toInt(), 0, (4 * dp).toInt())
+        }
+        section.addView(LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(TextView(context).apply {
+                text = "Memory"
+                setTextColor(BLACK); textSize = baseTinySize; typeface = Typeface.DEFAULT_BOLD
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            addView(TextView(context).apply {
+                text = "\u2009$usedMb / $totalMb MB"
+                setTextColor(BLACK); textSize = baseTinySize
+            })
+        })
+        // Track with a filled portion — same visual language as the brightness bar.
+        val trackH = (8 * dp).toInt()
+        section.addView(FrameLayout(context).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, trackH
+            ).apply { topMargin = (5 * dp).toInt() }
+            background = GradientDrawable().apply {
+                cornerRadius = trackH / 2f; setStroke(borderW, BLACK); setColor(WHITE)
+            }
+            addView(View(context).apply {
+                setBackgroundColor(BLACK)
+                layoutParams = FrameLayout.LayoutParams(0, trackH).also { lp ->
+                    viewTreeObserver.addOnGlobalLayoutListener(
+                        object : ViewTreeObserver.OnGlobalLayoutListener {
+                            var done = false
+                            override fun onGlobalLayout() {
+                                if (done) return; done = true
+                                viewTreeObserver.removeOnGlobalLayoutListener(this)
+                                val parentW = (parent as? View)?.width ?: return
+                                lp.width = (parentW * fraction).toInt().coerceIn(0, parentW)
+                                requestLayout()
+                            }
+                        })
+                }
+            })
+        })
+        return section
+    }
+
+    /**
+     * Long-press menu for a recent app: App info, or a best-effort stop.
+     *
+     * There is no public API to force-stop another app, and no intent that opens the system's
+     * force-stop confirmation directly. killBackgroundProcesses() is the closest thing available
+     * — it needs only the normal KILL_BACKGROUND_PROCESSES permission, but it only reaps
+     * background processes and the system is free to ignore it, so it is labelled as a stop
+     * rather than promising a kill. App info is where the real Force Stop button lives, so that
+     * option stays first.
+     *
+     * Drawn inside the panel rather than as a system dialog: an overlay cannot show an AlertDialog
+     * without a window of its own, and a second window here would flicker on e-ink.
+     */
+    private fun showAppActionsDialog(context: Context, dp: Float, pkg: String, label: String) {
+        val root = panelView as? FrameLayout ?: return
+        val borderW = (BORDER_WIDTH_DP * dp).toInt().coerceAtLeast(2)
+
+        val card = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply {
+                setColor(WHITE); setStroke(borderW, BLACK); cornerRadius = 16 * dp
+            }
+            setPadding((16 * dp).toInt(), (14 * dp).toInt(), (16 * dp).toInt(), (10 * dp).toInt())
+            isClickable = true  // don't let taps fall through to the scrim behind
+        }
+        card.addView(TextView(context).apply {
+            text = label
+            setTextColor(BLACK); textSize = baseTitleSize; typeface = Typeface.DEFAULT_BOLD
+            maxLines = 1; ellipsize = TextUtils.TruncateAt.END
+        })
+
+        // Wrapper so the whole thing can be removed as one view.
+        val holder = FrameLayout(context).apply {
+            setBackgroundColor(0x00000000)
+            isClickable = true
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+        fun close() { try { root.removeView(holder) } catch (_: Exception) {} }
+        holder.setOnClickListener { close() }
+
+        fun action(text: String, subtitle: String?, onTap: () -> Unit) {
+            card.addView(View(context).apply {
+                setBackgroundColor(BLACK)
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, (1 * dp).toInt().coerceAtLeast(1)
+                ).apply { topMargin = (10 * dp).toInt(); bottomMargin = (2 * dp).toInt() }
+            })
+            card.addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                minimumHeight = (44 * dp).toInt()
+                setPadding(0, (9 * dp).toInt(), 0, (9 * dp).toInt())
+                addView(TextView(context).apply {
+                    this.text = text
+                    setTextColor(BLACK); textSize = baseTextSize + 1f
+                    typeface = Typeface.DEFAULT_BOLD
+                })
+                if (subtitle != null) addView(TextView(context).apply {
+                    this.text = subtitle
+                    setTextColor(BLACK); textSize = baseTinySize
+                })
+                setOnClickListener { onTap() }
+            })
+        }
+
+        action("App info", "Permissions, storage, force stop") {
+            try {
+                context.startActivity(
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = android.net.Uri.parse("package:$pkg")
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                )
+            } catch (_: Exception) {}
+            close(); dismissPanel()
+        }
+        action("Stop app", "Ends background processes where allowed") {
+            try {
+                (context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager)
+                    .killBackgroundProcesses(pkg)
+            } catch (_: Exception) {}
+            close()
+            refreshPanelIfShowing()
+        }
+        action("Cancel", null) { close() }
+
+        holder.addView(card, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.CENTER
+            marginStart = (24 * dp).toInt(); marginEnd = (24 * dp).toInt()
+        })
+        root.addView(holder)
     }
 
     /** Simple gear glyph, drawn to match the panel's other 1-bit icons. */
@@ -2057,11 +2271,8 @@ object OverlayPanelManager {
                 // Equal weight so all items share the width evenly
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                 setOnLongClickListener {
-                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                        data = android.net.Uri.parse("package:${appInfo.packageName}")
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    context.startActivity(intent); dismissPanel(); true
+                    showAppActionsDialog(context, dp, appInfo.packageName, stripEmojis(appInfo.label))
+                    true
                 }
                 setOnClickListener {
                     try {
@@ -2143,11 +2354,8 @@ object OverlayPanelManager {
                 )
                 setOnClickListener { launchApp(context, appInfo.packageName) }
                 setOnLongClickListener {
-                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                        data = android.net.Uri.parse("package:${appInfo.packageName}")
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    context.startActivity(intent); dismissPanel(); true
+                    showAppActionsDialog(context, dp, appInfo.packageName, stripEmojis(appInfo.label))
+                    true
                 }
             }
             // Icon (only when icons are not hidden — text-only mode otherwise)
