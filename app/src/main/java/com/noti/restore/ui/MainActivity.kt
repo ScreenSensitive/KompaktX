@@ -307,7 +307,7 @@ fun KompaktXApp() {
                         fontSize = 14.sp, color = FG)
                     Text(
                         if (grantedCount == 6) "Everything KompaktX needs is enabled"
-                        else "Tap to see what is missing",
+                        else "${6 - grantedCount} still needed — tap to fix",
                         fontSize = 12.sp, color = FG
                     )
                 }
@@ -317,34 +317,86 @@ fun KompaktXApp() {
                 )
             }
             if (showPermissions) {
-                Divider(color = FG, thickness = 1.dp)
-                PermissionRow("Notification Access", "Required to read notifications",
-                    Icons.Default.Notifications, hasNotificationAccess
-                ) { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
-                Divider(color = FG, thickness = 1.dp)
-                PermissionRow("Display Over Other Apps", "Required for notification panel",
-                    Icons.Default.Layers, hasOverlayPermission
-                ) { context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
-                    data = android.net.Uri.parse("package:${context.packageName}")
-                }) }
-                Divider(color = FG, thickness = 1.dp)
-                PermissionRow("Usage Access", "Required for recent apps",
-                    Icons.Default.History, hasUsageAccess
-                ) { context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
-                Divider(color = FG, thickness = 1.dp)
-                PermissionRow("Accessibility Service", "Required for Recents button trigger",
-                    Icons.Default.Accessibility, hasAccessibility
-                ) { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-                Divider(color = FG, thickness = 1.dp)
-                PermissionRow("Disable Battery Optimization", "Prevents the system from killing the overlay",
-                    Icons.Default.BatteryFull, hasBatteryOptExemption
-                ) { requestIgnoreBatteryOptimizations(context) }
-                Divider(color = FG, thickness = 1.dp)
-                PermissionRow("Modify System Settings", "Required for brightness, adaptive brightness, and custom tones",
-                    Icons.Default.Tune, hasWriteSettings
-                ) { context.startActivity(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
-                    data = android.net.Uri.parse("package:${context.packageName}")
-                }) }
+                data class Perm(
+                    val name: String,
+                    val why: String,
+                    val icon: ImageVector,
+                    val granted: Boolean,
+                    val onGrant: () -> Unit
+                )
+                val perms = listOf(
+                    Perm("Notification Access", "Required to read notifications",
+                        Icons.Default.Notifications, hasNotificationAccess) {
+                        context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
+                    Perm("Display Over Other Apps", "Required for notification panel",
+                        Icons.Default.Layers, hasOverlayPermission) {
+                        context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                            data = android.net.Uri.parse("package:${context.packageName}") }) },
+                    Perm("Usage Access", "Required for recent apps",
+                        Icons.Default.History, hasUsageAccess) {
+                        context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) },
+                    Perm("Accessibility Service", "Required for Recents button trigger",
+                        Icons.Default.Accessibility, hasAccessibility) {
+                        context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+                    Perm("Disable Battery Optimization", "Prevents the system from killing the overlay",
+                        Icons.Default.BatteryFull, hasBatteryOptExemption) {
+                        requestIgnoreBatteryOptimizations(context) },
+                    Perm("Modify System Settings",
+                        "Required for brightness, adaptive brightness, and custom tones",
+                        Icons.Default.Tune, hasWriteSettings) {
+                        context.startActivity(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
+                            data = android.net.Uri.parse("package:${context.packageName}") }) }
+                )
+
+                // Outstanding ones first and at full size — they are the only rows that need
+                // acting on, so they get the icon, the reason, and a Grant button.
+                perms.filter { !it.granted }.forEach { perm ->
+                    Divider(color = FG, thickness = 1.dp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth()
+                            .clickable(onClick = perm.onGrant)
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(perm.icon, null, tint = FG, modifier = Modifier.size(24.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(perm.name, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = FG)
+                            Text(perm.why, fontSize = 12.sp, color = FG)
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Box(
+                            modifier = Modifier.clip(RoundedCornerShape(8.dp))
+                                .background(FG, RoundedCornerShape(8.dp))
+                                .padding(horizontal = 14.dp, vertical = 8.dp)
+                        ) {
+                            Text("Grant", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = BG)
+                        }
+                    }
+                }
+
+                // Granted ones collapse to a compact checklist: still visible so you can see and
+                // revoke what you have given, but taking a fraction of the room.
+                val done = perms.filter { it.granted }
+                if (done.isNotEmpty()) {
+                    Divider(color = FG, thickness = 1.dp)
+                    Column(Modifier.padding(vertical = 6.dp)) {
+                        done.forEach { perm ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth()
+                                    .clickable(onClick = perm.onGrant)
+                                    .padding(horizontal = 16.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.Check, null, tint = FG,
+                                    modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(10.dp))
+                                Text(perm.name, fontSize = 12.sp, color = FG,
+                                    modifier = Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -916,27 +968,6 @@ private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
             .background(CARD_BG),
         content = content
     )
-}
-
-@Composable
-private fun PermissionRow(title: String, subtitle: String, icon: ImageVector, isGranted: Boolean, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth()
-            .clickable(enabled = !isGranted, onClick = onClick)
-            .padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(icon, null, tint = FG, modifier = Modifier.size(24.dp))
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = FG)
-            Text(subtitle, fontSize = 12.sp, color = FG)
-        }
-        Icon(
-            if (isGranted) Icons.Default.Check else Icons.Default.ChevronRight,
-            null, tint = FG, modifier = Modifier.size(20.dp)
-        )
-    }
 }
 
 @Composable
