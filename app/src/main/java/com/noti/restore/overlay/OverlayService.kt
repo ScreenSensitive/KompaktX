@@ -9,9 +9,21 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.res.Configuration
 import android.os.IBinder
 import com.noti.restore.eink.MeinkController
+import com.noti.restore.service.KompaktXListener
+import com.noti.restore.service.RecentsButtonService
 import com.noti.restore.ui.MainActivity
+import com.noti.restore.ui.PreferencesManager
+import com.noti.restore.ui.ThemeMode
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.launch
 
 class OverlayService : Service() {
 
@@ -33,16 +45,82 @@ class OverlayService : Service() {
         }
     }
 
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
         MeinkController.init()
+        observePreferences()
         OverlayPanelManager.createTouchStrip(this)
         registerReceiver(screenStateReceiver, IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_SCREEN_OFF)
         })
+    }
+
+    /**
+     * Keep the overlay's settings in sync from the service itself.
+     *
+     * These used to be pushed into OverlayPanelManager only by MainActivity's LaunchedEffects,
+     * which meant that any time the service ran without the app having been opened — after a
+     * reboot via BootReceiver, or a START_STICKY restart following a process kill — the overlay
+     * came up on hardcoded defaults instead of the user's settings: swipe-from-left trigger, light
+     * theme, tabs at the top, and an empty hidden-apps list, so filtered apps reappeared.
+     *
+     * Collecting here rather than reading once also means changes apply while the app is closed.
+     */
+    private fun observePreferences() {
+        val prefs = PreferencesManager.getInstance(this)
+
+        fun <T> watch(flow: Flow<T>, apply: (T) -> Unit) {
+            serviceScope.launch { flow.collect { apply(it) } }
+        }
+
+        watch(prefs.triggerMode) {
+            if (OverlayPanelManager.triggerMode != it) {
+                OverlayPanelManager.triggerMode = it
+                OverlayPanelManager.recreateTouchStrip()
+            }
+        }
+        watch(prefs.themeMode) { mode ->
+            val systemDark = (resources.configuration.uiMode and
+                Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+            OverlayPanelManager.darkMode = when (mode) {
+                ThemeMode.LIGHT -> false
+                ThemeMode.DARK -> true
+                else -> systemDark
+            }
+        }
+        watch(prefs.headsUpEnabled) { OverlayPanelManager.headsUpEnabled = it }
+        watch(prefs.recentAppsEnabled) { OverlayPanelManager.recentAppsEnabled = it }
+        watch(prefs.recentsLayoutMode) { OverlayPanelManager.recentsLayoutMode = it }
+        watch(prefs.tabPosition) { OverlayPanelManager.tabPosition = it }
+        watch(prefs.hideAppIcons) { OverlayPanelManager.hideAppIcons = it }
+        watch(prefs.fontSizeOffset) { OverlayPanelManager.fontSizeOffset = it }
+        watch(prefs.einkControlsEnabled) { OverlayPanelManager.einkControlsEnabled = it }
+        watch(prefs.hiddenRecentApps) { OverlayPanelManager.hiddenRecentApps = it }
+        watch(prefs.hiddenNotiApps) {
+            OverlayPanelManager.hiddenNotiApps = it
+            KompaktXListener.setHiddenNotiApps(it)
+        }
+        watch(prefs.volumeLongPressMedia) { RecentsButtonService.volumeLongPressMediaEnabled = it }
+
+        // The three shortcut assignments have to be applied together: updateShortcuts() clears
+        // every trigger before reassigning, so pushing them one at a time would leave the others
+        // unassigned until their own flow happened to emit.
+        serviceScope.launch {
+            combine(
+                prefs.shortcutFrontLight,
+                prefs.shortcutEinkRefresh,
+                prefs.shortcutRefreshCycle
+            ) { frontLight, einkRefresh, refreshCycle ->
+                Triple(frontLight, einkRefresh, refreshCycle)
+            }.collect { (frontLight, einkRefresh, refreshCycle) ->
+                RecentsButtonService.updateShortcuts(frontLight, einkRefresh, refreshCycle)
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -51,6 +129,7 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        serviceScope.cancel()
         try { unregisterReceiver(screenStateReceiver) } catch (_: Exception) {}
         OverlayPanelManager.removeTouchStrip()
     }
