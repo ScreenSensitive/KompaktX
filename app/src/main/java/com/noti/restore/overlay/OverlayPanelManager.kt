@@ -127,6 +127,9 @@ object OverlayPanelManager {
      */
     private const val WAKE_RESTORE_GRACE_MS = 3000L
 
+    /** How often the panel header's clock and battery re-read while the panel is open. */
+    private const val CLOCK_REFRESH_MS = 60_000L
+
     /** How far a drag must travel horizontally before it counts as a tab swipe. */
     private const val TAB_SWIPE_THRESHOLD_DP = 44f
 
@@ -633,14 +636,19 @@ object OverlayPanelManager {
         // One status line: day, time and battery are all read-only facts, so they belong
         // together. Battery used to sit stacked above the close button, which put a readout and
         // a control in the same column and left the ✕ hanging low and off-centre.
-        dateCol.addView(TextView(context).apply {
+        val clockLine = TextView(context).apply {
             text = buildString {
                 append(dayOfWeek); append("  |  "); append(timeStr)
                 if (batteryLevel != null) { append("  |  "); append("$batteryLevel%") }
             }
             setTextColor(BLACK); textSize = baseTinySize
-        })
+        }
+        dateCol.addView(clockLine)
         topBar.addView(dateCol)
+        // The header is built once, so without this the clock freezes at whatever it read when the
+        // panel opened. Re-read on the minute rather than every second: one partial refresh a
+        // minute is unnoticeable on e-ink, sixty is not.
+        startClockUpdates(context, clockLine)
         // Close, on its own and vertically centred against the date block.
         topBar.addView(TextView(context).apply {
             text = "\u2715"; setTextColor(BLACK); textSize = baseTitleSize + 2f
@@ -899,6 +907,7 @@ object OverlayPanelManager {
     }
 
     private fun dismissPanel() {
+        stopClockUpdates()
         panelView?.let { view ->
             try { windowManager?.removeView(view) } catch (_: Exception) {}
         }
@@ -2472,6 +2481,40 @@ object OverlayPanelManager {
      * performHapticFeedback, which is silently dropped when a view has haptics disabled or the
      * window is not focusable — and the panel window deliberately is not.
      */
+    private var clockUpdateRunnable: Runnable? = null
+
+    /** Keep the header's day/time/battery line current while the panel stays open. */
+    private fun startClockUpdates(context: Context, line: TextView) {
+        stopClockUpdates()
+        val runnable = object : Runnable {
+            override fun run() {
+                if (panelView == null) { stopClockUpdates(); return }
+                val cal = java.util.Calendar.getInstance()
+                val battery = try {
+                    context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))?.let {
+                        val lvl = it.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+                        val scale = it.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+                        if (lvl >= 0 && scale > 0) lvl * 100 / scale else null
+                    }
+                } catch (_: Exception) { null }
+                line.text = buildString {
+                    append(android.text.format.DateFormat.format("EEEE", cal))
+                    append("  |  ")
+                    append(android.text.format.DateFormat.getTimeFormat(context).format(cal.time))
+                    if (battery != null) { append("  |  "); append("$battery%") }
+                }
+                handler.postDelayed(this, CLOCK_REFRESH_MS)
+            }
+        }
+        clockUpdateRunnable = runnable
+        handler.postDelayed(runnable, CLOCK_REFRESH_MS)
+    }
+
+    private fun stopClockUpdates() {
+        clockUpdateRunnable?.let { handler.removeCallbacks(it) }
+        clockUpdateRunnable = null
+    }
+
     private fun tapFeedback(context: Context) {
         if (!hapticsEnabled) return
         try {
