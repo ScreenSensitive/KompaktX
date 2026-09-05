@@ -1342,6 +1342,42 @@ object OverlayPanelManager {
 
     // ─── Quick Toggle Icons (pure B/W Canvas) ──────────────────────
 
+    /**
+     * Turn location on or off, returning false if the system refused and the caller should fall
+     * back to opening the location settings screen.
+     *
+     * Both paths need WRITE_SECURE_SETTINGS, which cannot be requested at runtime but can be
+     * granted over adb:
+     *     adb shell pm grant com.kompaktx.app android.permission.WRITE_SECURE_SETTINGS
+     *
+     * LocationManager.setLocationEnabledForUser() is the supported route since Android P — it is
+     * hidden @SystemApi, hence the reflection. Settings.Secure.LOCATION_MODE was deprecated in the
+     * same release and writing it no longer reliably drives the providers from an app, even though
+     * the identical write still works from an adb shell; it is kept only as a fallback for older
+     * or non-standard builds.
+     */
+    private fun setLocationEnabled(
+        context: Context,
+        manager: android.location.LocationManager,
+        enable: Boolean
+    ): Boolean {
+        try {
+            val method = android.location.LocationManager::class.java.getMethod(
+                "setLocationEnabledForUser", Boolean::class.javaPrimitiveType, android.os.UserHandle::class.java
+            )
+            method.invoke(manager, enable, android.os.Process.myUserHandle())
+            if (manager.isLocationEnabled == enable) return true
+        } catch (_: Throwable) {}
+        return try {
+            Settings.Secure.putInt(
+                context.contentResolver, Settings.Secure.LOCATION_MODE,
+                if (enable) Settings.Secure.LOCATION_MODE_HIGH_ACCURACY
+                else Settings.Secure.LOCATION_MODE_OFF
+            )
+            manager.isLocationEnabled == enable
+        } catch (_: Exception) { false }
+    }
+
     /** Map-pin glyph; struck through when location is off, matching the other toggle icons. */
     private fun drawLocationIcon(size: Int, on: Boolean): Bitmap {
         val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
@@ -1587,15 +1623,7 @@ object OverlayPanelManager {
             fun locationOn(): Boolean = try { locationMgr.isLocationEnabled } catch (_: Exception) { false }
             pills.add(PillItem("Location", locationOn(), drawLocationIcon(iconSize, locationOn()),
                 onTap = {
-                    val target = !locationOn()
-                    val wrote = try {
-                        Settings.Secure.putInt(
-                            context.contentResolver, Settings.Secure.LOCATION_MODE,
-                            if (target) Settings.Secure.LOCATION_MODE_HIGH_ACCURACY
-                            else Settings.Secure.LOCATION_MODE_OFF
-                        )
-                    } catch (_: Exception) { false }
-                    if (!wrote) {
+                    if (!setLocationEnabled(context, locationMgr, !locationOn())) {
                         try {
                             context.startActivity(
                                 Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
