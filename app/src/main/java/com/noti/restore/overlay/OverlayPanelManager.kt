@@ -1407,17 +1407,19 @@ object OverlayPanelManager {
         val color = if (on) WHITE else BLACK
         val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             this.color = color; style = Paint.Style.STROKE
-            strokeWidth = size * 0.12f; strokeCap = Paint.Cap.ROUND
+            strokeWidth = size * 0.105f; strokeCap = Paint.Cap.ROUND
         }
-        val cx = size / 2f; val bottom = size * 0.88f
-        // Three bold arcs, well-spaced for e-ink clarity
+        // Every arc and the dot share one origin so the fan converges on a single point. The
+        // previous bounds put each arc's centre at bottom - r, which moved with the radius, so
+        // the three arcs were struck about different centres and never lined up.
+        val cx = size / 2f
+        val originY = size * 0.80f
         for (i in 1..3) {
-            val r = size * 0.18f * i
-            c.drawArc(cx - r, bottom - r * 2, cx + r, bottom, -140f, 100f, false, p)
+            val r = size * 0.19f * i
+            c.drawArc(cx - r, originY - r, cx + r, originY + r, -132f, 84f, false, p)
         }
-        // Larger filled dot at bottom
         p.style = Paint.Style.FILL
-        c.drawCircle(cx, bottom, size * 0.09f, p)
+        c.drawCircle(cx, originY, size * 0.075f, p)
         return bmp
     }
 
