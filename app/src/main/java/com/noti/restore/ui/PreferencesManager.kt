@@ -63,6 +63,7 @@ class PreferencesManager(private val context: Context) {
         private val HIDDEN_RECENT_APPS = stringSetPreferencesKey("hidden_recent_apps")
         private val AUTO_START = booleanPreferencesKey("auto_start")
         private val SHOW_MEMORY = booleanPreferencesKey("show_memory")
+        private val SHOW_LOCATION_TOGGLE = booleanPreferencesKey("show_location_toggle")
         private val TRIGGER_MODE = intPreferencesKey("trigger_mode")
         private val FONT_SIZE_OFFSET = intPreferencesKey("font_size_offset")
         private val EINK_CONTROLS_ENABLED = booleanPreferencesKey("eink_controls_enabled")
@@ -97,6 +98,7 @@ class PreferencesManager(private val context: Context) {
     val hiddenRecentApps: Flow<Set<String>> = context.dataStore.data.map { it[HIDDEN_RECENT_APPS] ?: emptySet() }
     val autoStart: Flow<Boolean> = context.dataStore.data.map { it[AUTO_START] ?: true }
     val showMemory: Flow<Boolean> = context.dataStore.data.map { it[SHOW_MEMORY] ?: false }
+    val showLocationToggle: Flow<Boolean> = context.dataStore.data.map { it[SHOW_LOCATION_TOGGLE] ?: false }
     val triggerMode: Flow<Int> = context.dataStore.data.map { it[TRIGGER_MODE] ?: TriggerMode.SWIPE_LEFT_EDGE }
     val fontSizeOffset: Flow<Int> = context.dataStore.data.map { it[FONT_SIZE_OFFSET] ?: 0 }
     val einkControlsEnabled: Flow<Boolean> = context.dataStore.data.map { it[EINK_CONTROLS_ENABLED] ?: false }
@@ -117,6 +119,7 @@ class PreferencesManager(private val context: Context) {
     suspend fun setRecentAppsEnabled(enabled: Boolean) { context.dataStore.edit { it[RECENT_APPS_ENABLED] = enabled } }
     suspend fun setAutoStart(enabled: Boolean) { context.dataStore.edit { it[AUTO_START] = enabled } }
     suspend fun setShowMemory(enabled: Boolean) { context.dataStore.edit { it[SHOW_MEMORY] = enabled } }
+    suspend fun setShowLocationToggle(enabled: Boolean) { context.dataStore.edit { it[SHOW_LOCATION_TOGGLE] = enabled } }
     suspend fun setTriggerMode(mode: Int) { context.dataStore.edit { it[TRIGGER_MODE] = mode } }
     suspend fun setFontSizeOffset(offset: Int) { context.dataStore.edit { it[FONT_SIZE_OFFSET] = offset.coerceIn(-2, 4) } }
     suspend fun setEinkControlsEnabled(enabled: Boolean) { context.dataStore.edit { it[EINK_CONTROLS_ENABLED] = enabled } }

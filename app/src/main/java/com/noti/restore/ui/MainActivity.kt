@@ -12,6 +12,7 @@ import android.provider.OpenableColumns
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -28,6 +29,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -170,6 +172,24 @@ fun KompaktXApp() {
     val volumeLongPressMedia by prefs.volumeLongPressMedia.collectAsState(initial = false)
     val autoStart by prefs.autoStart.collectAsState(initial = true)
     val showMemory by prefs.showMemory.collectAsState(initial = false)
+    val showLocationToggle by prefs.showLocationToggle.collectAsState(initial = false)
+    // Re-checked on the status tick so granting it over adb takes effect without a restart.
+    val hasSecureSettings = remember(tick) {
+        context.checkSelfPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+    var showLocationPage by remember { mutableStateOf(false) }
+    BackHandler(enabled = showLocationPage) { showLocationPage = false }
+
+    if (showLocationPage) {
+        LocationToggleScreen(
+            granted = hasSecureSettings,
+            enabled = showLocationToggle,
+            onToggle = { scope.launch { prefs.setShowLocationToggle(it) } },
+            onBack = { showLocationPage = false }
+        )
+        return
+    }
 
     LaunchedEffect(headsUpEnabled) { OverlayPanelManager.headsUpEnabled = headsUpEnabled }
     LaunchedEffect(recentAppsEnabled) { OverlayPanelManager.recentAppsEnabled = recentAppsEnabled }
@@ -359,6 +379,26 @@ fun KompaktXApp() {
             ToggleRow("Hide App Icons", "Hide icons in recents and notifications",
                 Icons.Default.HideImage, hideAppIcons
             ) { scope.launch { prefs.setHideAppIcons(it) } }
+            Divider(color = FG, thickness = 1.dp)
+            Row(
+                modifier = Modifier.fillMaxWidth()
+                    .clickable { showLocationPage = true }
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.LocationOn, null, tint = FG, modifier = Modifier.size(24.dp))
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Location Toggle", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = FG)
+                    Text(
+                        if (!hasSecureSettings) "Needs setup — tap to see how"
+                        else if (showLocationToggle) "Shown in the panel"
+                        else "Ready — not shown",
+                        fontSize = 12.sp, color = FG
+                    )
+                }
+                Icon(Icons.Default.ChevronRight, null, tint = FG, modifier = Modifier.size(20.dp))
+            }
             Divider(color = FG, thickness = 1.dp)
             ToggleRow("Show Memory Usage", "Used and total RAM in the panel's settings tab",
                 Icons.Default.Memory, showMemory
@@ -590,6 +630,133 @@ fun KompaktXApp() {
                 .padding(top = 6.dp)
         )
 
+        Spacer(Modifier.height(32.dp))
+    }
+}
+
+/**
+ * Explains why the Location toggle needs a permission the app cannot ask for, and lets it be
+ * switched on once that permission exists.
+ *
+ * The switch is disabled rather than hidden while ungranted: hiding it would leave no way to
+ * discover the feature or find out what unlocks it.
+ */
+@Composable
+private fun LocationToggleScreen(
+    granted: Boolean,
+    enabled: Boolean,
+    onToggle: (Boolean) -> Unit,
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+    val command = "adb shell pm grant com.kompaktx.app android.permission.WRITE_SECURE_SETTINGS"
+    Column(
+        Modifier.fillMaxSize().background(BG).verticalScroll(rememberScrollState()).padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable(onClick = onBack)
+                .heightIn(min = 44.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.ChevronLeft, null, tint = FG, modifier = Modifier.size(22.dp))
+            Text("Back", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = FG)
+        }
+        Spacer(Modifier.height(12.dp))
+        Text("Location Toggle", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = FG)
+        Text(
+            "Adds a Location button to the panel's quick toggles.",
+            fontSize = 13.sp, color = FG, modifier = Modifier.padding(top = 4.dp, bottom = 18.dp)
+        )
+
+        SettingsCard {
+            // Greyed out until the permission exists — the row still shows so the feature is
+            // discoverable, but it cannot be switched on into a state that would not work.
+            val rowAlpha = if (granted) 1f else 0.4f
+            Row(
+                modifier = Modifier.fillMaxWidth()
+                    .then(if (granted) Modifier.clickable { onToggle(!enabled) } else Modifier)
+                    .padding(16.dp)
+                    .alpha(rowAlpha),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.LocationOn, null, tint = FG, modifier = Modifier.size(24.dp))
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Show in panel", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = FG)
+                    Text(
+                        if (granted) "Tap the button to turn location on or off"
+                        else "Unavailable until the permission below is granted",
+                        fontSize = 12.sp, color = FG
+                    )
+                }
+                Switch(
+                    checked = enabled && granted,
+                    onCheckedChange = if (granted) { v -> onToggle(v) } else null,
+                    enabled = granted,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = BG, checkedTrackColor = FG,
+                        uncheckedThumbColor = FG, uncheckedTrackColor = BG,
+                        uncheckedBorderColor = FG,
+                        disabledCheckedTrackColor = FG, disabledUncheckedTrackColor = BG
+                    )
+                )
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+        SectionHeader(if (granted) "Permission granted" else "Permission needed")
+        SettingsCard {
+            Column(Modifier.padding(16.dp)) {
+                Text(
+                    if (granted)
+                        "WRITE_SECURE_SETTINGS is granted, so KompaktX can switch location on and off directly."
+                    else
+                        "Android does not let an app turn location on or off without " +
+                            "WRITE_SECURE_SETTINGS, and there is no way to request it from inside " +
+                            "the app. It has to be granted once over adb — the grant then survives " +
+                            "reboots and updates.",
+                    fontSize = 13.sp, color = FG
+                )
+                if (!granted) {
+                    Spacer(Modifier.height(14.dp))
+                    Text("From a computer", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = FG)
+                    Text(command, fontSize = 11.sp, color = FG,
+                        modifier = Modifier.padding(top = 4.dp)
+                            .border(1.dp, BORDER, RoundedCornerShape(6.dp)).padding(8.dp))
+                    Spacer(Modifier.height(14.dp))
+                    Text("Without a computer", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = FG)
+                    Text(
+                        "Turn on Wireless debugging in Developer options, then use an on-device " +
+                            "adb app such as LADB to pair with this phone and run the same command.",
+                        fontSize = 12.sp, color = FG, modifier = Modifier.padding(top = 4.dp)
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth()
+                            .clickable {
+                                val clip = context.getSystemService(android.content.ClipboardManager::class.java)
+                                clip?.setPrimaryClip(
+                                    android.content.ClipData.newPlainText("adb command", command)
+                                )
+                                Toast.makeText(context, "Command copied", Toast.LENGTH_SHORT).show()
+                            }
+                            .border(2.dp, BORDER, RoundedCornerShape(8.dp))
+                            .heightIn(min = 44.dp).padding(horizontal = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(Icons.Default.ContentCopy, null, tint = FG, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Copy command", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = FG)
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "This screen updates on its own once the permission is granted.",
+                        fontSize = 11.sp, color = FG
+                    )
+                }
+            }
+        }
         Spacer(Modifier.height(32.dp))
     }
 }

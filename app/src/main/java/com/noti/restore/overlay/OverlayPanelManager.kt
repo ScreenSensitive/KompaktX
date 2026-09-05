@@ -101,6 +101,7 @@ object OverlayPanelManager {
     var fontSizeOffset = 0
     var einkControlsEnabled = false
     var showMemory = false
+    var showLocationToggle = false
     var hiddenNotiApps: Set<String> = emptySet()
     var hiddenRecentApps: Set<String> = emptySet()
     var recentsLayoutMode: Int = RecentsLayoutMode.INLINE
@@ -581,33 +582,28 @@ object OverlayPanelManager {
             text = monthYear; setTextColor(BLACK); textSize = baseSmallSize
             typeface = Typeface.DEFAULT_BOLD
         })
+        // One status line: day, time and battery are all read-only facts, so they belong
+        // together. Battery used to sit stacked above the close button, which put a readout and
+        // a control in the same column and left the ✕ hanging low and off-centre.
         dateCol.addView(TextView(context).apply {
-            text = "$dayOfWeek  |  $timeStr"; setTextColor(BLACK); textSize = baseTinySize
+            text = buildString {
+                append(dayOfWeek); append("  |  "); append(timeStr)
+                if (batteryLevel != null) { append("  |  "); append("$batteryLevel%") }
+            }
+            setTextColor(BLACK); textSize = baseTinySize
         })
         topBar.addView(dateCol)
-        // Battery percentage + close button column on the right
-        val rightCol = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding((8 * dp).toInt(), 0, 0, 0)
-        }
-        if (batteryLevel != null) {
-            rightCol.addView(TextView(context).apply {
-                text = "$batteryLevel%"; setTextColor(BLACK); textSize = baseSmallSize
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = android.view.Gravity.CENTER
-            })
-        }
-        rightCol.addView(TextView(context).apply {
-            text = "\u2715"; setTextColor(BLACK); textSize = baseTitleSize + 4f
+        // Close, on its own and vertically centred against the date block.
+        topBar.addView(TextView(context).apply {
+            text = "\u2715"; setTextColor(BLACK); textSize = baseTitleSize + 2f
             gravity = android.view.Gravity.CENTER
-            // Wider hit target \u2014 Material recommends ~44dp; pad both axes generously.
-            setPadding((14 * dp).toInt(), (10 * dp).toInt(), (14 * dp).toInt(), (10 * dp).toInt())
             minWidth = (44 * dp).toInt()
             minHeight = (44 * dp).toInt()
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { gravity = Gravity.CENTER_VERTICAL; marginStart = (8 * dp).toInt() }
             setOnClickListener { dismissPanel() }
         })
-        topBar.addView(rightCol)
         panelCard.addView(topBar)
 
         // ── Tab switcher: small pill toggle (placed top or bottom per [tabPosition]) ──
@@ -676,6 +672,7 @@ object OverlayPanelManager {
         }
         val tabContainer = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             background = GradientDrawable().apply {
                 cornerRadius = 100 * dp; setStroke(borderW, BLACK); setColor(WHITE)
             }
@@ -696,13 +693,16 @@ object OverlayPanelManager {
                 setTextColor(if (selected) WHITE else BLACK)
                 textSize = baseSmallSize; typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER; background = tabBg
-                setPadding((16 * dp).toInt(), (7 * dp).toInt(), (16 * dp).toInt(), (7 * dp).toInt())
+                setPadding((16 * dp).toInt(), 0, (16 * dp).toInt(), 0)
             }
             tabContainer.addView(FrameLayout(context).apply {
                 minimumHeight = (46 * dp).toInt()
+                // The pill fills the wrapper's height so the selected tab's fill spans the whole
+                // strip. Sizing it to its text left a band of container showing above and below,
+                // which is what made the selection look like it didn't reach the outline.
                 addView(tabLabel, FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.WRAP_CONTENT,
-                    FrameLayout.LayoutParams.WRAP_CONTENT
+                    FrameLayout.LayoutParams.MATCH_PARENT
                 ).apply { gravity = Gravity.CENTER })
                 isClickable = true
                 setOnClickListener {
@@ -1619,7 +1619,7 @@ object OverlayPanelManager {
         // With it, this flips location directly. Without it, the write throws and we fall back to
         // opening the system's location screen, which is the most any ordinary app can do.
         val locationMgr = context.getSystemService(Context.LOCATION_SERVICE) as? android.location.LocationManager
-        if (locationMgr != null) {
+        if (showLocationToggle && locationMgr != null) {
             fun locationOn(): Boolean = try { locationMgr.isLocationEnabled } catch (_: Exception) { false }
             pills.add(PillItem("Location", locationOn(), drawLocationIcon(iconSize, locationOn()),
                 onTap = {
@@ -1740,44 +1740,44 @@ object OverlayPanelManager {
      * legible at a glance on a panel that has no colour to spend on it.
      */
     private fun buildMemoryRow(context: Context, dp: Float, borderW: Int): View {
-        val section = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, (8 * dp).toInt(), 0, (4 * dp).toInt())
-        }
-        val valueText = TextView(context).apply {
-            setTextColor(BLACK); textSize = baseTinySize
-        }
-        section.addView(LinearLayout(context).apply {
+        // Laid out like the brightness row above it — label, track, value on one line — so the
+        // settings tab reads as one column of controls rather than a stack of unrelated blocks.
+        val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            addView(TextView(context).apply {
-                text = "Memory"
-                setTextColor(BLACK); textSize = baseTinySize; typeface = Typeface.DEFAULT_BOLD
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            })
-            addView(valueText)
+            setPadding(0, (8 * dp).toInt(), 0, (8 * dp).toInt())
+        }
+        row.addView(TextView(context).apply {
+            text = "RAM"
+            setTextColor(BLACK); textSize = baseSmallSize; typeface = Typeface.DEFAULT_BOLD
+            minWidth = (34 * dp).toInt()
         })
-        // Track with a filled portion — same visual language as the brightness bar.
         val trackH = (8 * dp).toInt()
         val fill = View(context).apply {
             setBackgroundColor(BLACK)
             layoutParams = FrameLayout.LayoutParams(0, trackH)
         }
-        section.addView(FrameLayout(context).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, trackH
-            ).apply { topMargin = (5 * dp).toInt() }
+        row.addView(FrameLayout(context).apply {
+            layoutParams = LinearLayout.LayoutParams(0, trackH, 1f).apply {
+                marginStart = (8 * dp).toInt(); marginEnd = (8 * dp).toInt()
+            }
             background = GradientDrawable().apply {
                 cornerRadius = trackH / 2f; setStroke(borderW, BLACK); setColor(WHITE)
             }
             addView(fill)
         })
+        val valueText = TextView(context).apply {
+            setTextColor(BLACK); textSize = baseTinySize
+            minWidth = (58 * dp).toInt()
+            gravity = Gravity.END
+        }
+        row.addView(valueText)
 
         liveMemoryText = valueText
         liveMemoryFill = fill
         updateMemoryReadout(context)
         startMemoryUpdates(context)
-        return section
+        return row
     }
 
     /**
@@ -1795,7 +1795,9 @@ object OverlayPanelManager {
         } catch (_: Exception) { return }
         val totalMb = info.totalMem / (1024 * 1024)
         val usedMb = (info.totalMem - info.availMem) / (1024 * 1024)
-        text.text = "$usedMb / $totalMb MB"
+        text.text = String.format(
+            java.util.Locale.getDefault(), "%.1f / %.1f GB", usedMb / 1024f, totalMb / 1024f
+        )
         liveMemoryFill?.let { fill ->
             val track = fill.parent as? View ?: return@let
             val width = track.width
