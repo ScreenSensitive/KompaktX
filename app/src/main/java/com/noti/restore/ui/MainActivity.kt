@@ -32,9 +32,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -44,12 +47,15 @@ import com.noti.restore.overlay.OverlayService
 import com.noti.restore.service.KompaktXListener
 import com.noti.restore.service.RecentsButtonService
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         MeinkController.init()
+        // Seed the theme before the first frame — see the theme cache below.
+        seedThemeFromCache(this)
         setContent { KompaktXApp() }
     }
 }
@@ -57,6 +63,29 @@ class MainActivity : ComponentActivity() {
 // In-app theme — backed by a Compose State so any composable that reads BG/FG/CARD_BG/BORDER
 // is automatically tracked and recomposed when the active theme flips.
 private val darkModeState = mutableStateOf(false)
+
+// The real theme preference lives in DataStore, which is read asynchronously — so the first
+// composed frame lands before it arrives and the window would paint in whatever this state
+// happens to hold. Mirroring the last resolved value into SharedPreferences, which reads
+// synchronously, lets onCreate seed it correctly before anything is drawn. DataStore stays the
+// source of truth; this is only a fast path to avoid opening in the wrong theme.
+private const val THEME_CACHE_PREFS = "kompaktx_theme_cache"
+private const val THEME_CACHE_KEY = "last_resolved_dark"
+
+private fun seedThemeFromCache(context: Context) {
+    darkModeState.value = try {
+        context.getSharedPreferences(THEME_CACHE_PREFS, Context.MODE_PRIVATE)
+            .getBoolean(THEME_CACHE_KEY, false)
+    } catch (_: Exception) { false }
+}
+
+private fun cacheResolvedTheme(context: Context, isDark: Boolean) {
+    try {
+        context.getSharedPreferences(THEME_CACHE_PREFS, Context.MODE_PRIVATE)
+            .edit().putBoolean(THEME_CACHE_KEY, isDark).apply()
+    } catch (_: Exception) {}
+}
+
 private val BG: Color get() = if (darkModeState.value) Color.Black else Color.White
 private val FG: Color get() = if (darkModeState.value) Color.White else Color.Black
 private val CARD_BG: Color get() = BG
@@ -68,8 +97,16 @@ fun KompaktXApp() {
     val scope = rememberCoroutineScope()
     val prefs = remember { PreferencesManager.getInstance(context) }
 
+    // Permission state can only change while the user is away in system settings, so this polls
+    // to notice their return. Scoped to RESUMED so it stops entirely once the app is backgrounded
+    // rather than recomposing the whole screen every 2s for the life of the activity.
     var tick by remember { mutableIntStateOf(0) }
-    LaunchedEffect(Unit) { while (true) { delay(2000); tick++ } }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) { delay(2000); tick++ }
+        }
+    }
 
     val hasOverlayPermission = remember(tick) { Settings.canDrawOverlays(context) }
     val hasNotificationAccess = remember(tick) { KompaktXListener.isNotificationAccessGranted(context) }
@@ -88,7 +125,13 @@ fun KompaktXApp() {
     val hiddenRecentApps by prefs.hiddenRecentApps.collectAsState(initial = emptySet())
     val recentsLayoutMode by prefs.recentsLayoutMode.collectAsState(initial = RecentsLayoutMode.INLINE)
     val hideAppIcons by prefs.hideAppIcons.collectAsState(initial = false)
-    val themeMode by prefs.themeMode.collectAsState(initial = ThemeMode.SYSTEM)
+    // Collected as nullable so that "DataStore hasn't answered yet" is distinguishable from a
+    // real stored value. Every flow here comes from the same DataStore, so one arriving means
+    // they all have — this doubles as the readiness gate for the whole screen below.
+    val storedThemeMode by remember { prefs.themeMode.map { it as Int? } }
+        .collectAsState(initial = null)
+    val prefsLoaded = storedThemeMode != null
+    val themeMode = storedThemeMode ?: ThemeMode.SYSTEM
     val tabPosition by prefs.tabPosition.collectAsState(initial = TabPosition.TOP)
 
     // Resolve effective dark state from the theme pref + system uiMode.
@@ -100,8 +143,13 @@ fun KompaktXApp() {
         ThemeMode.DARK -> true
         else -> systemDark
     }
-    // Update theme state during composition; reads by BG/FG/etc. will recompose automatically.
-    if (darkModeState.value != isDark) darkModeState.value = isDark
+    // Only take over the theme once the stored preference is actually known. Until then keep the
+    // value onCreate seeded from cache, rather than briefly asserting the SYSTEM fallback and
+    // flipping the whole window a frame later.
+    if (prefsLoaded && darkModeState.value != isDark) {
+        darkModeState.value = isDark
+        cacheResolvedTheme(context, isDark)
+    }
     // Match system bar icon tint to the active theme so they stay legible.
     val view = LocalView.current
     if (!view.isInEditMode) {
@@ -119,6 +167,7 @@ fun KompaktXApp() {
     // Shortcut assignments
     val shortcutFrontLight by prefs.shortcutFrontLight.collectAsState(initial = ShortcutTrigger.NONE)
     val shortcutEinkRefresh by prefs.shortcutEinkRefresh.collectAsState(initial = ShortcutTrigger.NONE)
+    val shortcutRefreshCycle by prefs.shortcutRefreshCycle.collectAsState(initial = ShortcutTrigger.NONE)
     val volumeLongPressMedia by prefs.volumeLongPressMedia.collectAsState(initial = false)
 
     LaunchedEffect(headsUpEnabled) { OverlayPanelManager.headsUpEnabled = headsUpEnabled }
@@ -129,8 +178,10 @@ fun KompaktXApp() {
     }
     LaunchedEffect(fontSizeOffset) { OverlayPanelManager.fontSizeOffset = fontSizeOffset }
     LaunchedEffect(einkControlsEnabled) { OverlayPanelManager.einkControlsEnabled = einkControlsEnabled }
-    LaunchedEffect(shortcutFrontLight, shortcutEinkRefresh) {
-        RecentsButtonService.updateShortcuts(shortcutFrontLight, shortcutEinkRefresh, ShortcutTrigger.NONE)
+    LaunchedEffect(shortcutFrontLight, shortcutEinkRefresh, shortcutRefreshCycle) {
+        // shortcut_refresh_cycle used to be passed as a hardcoded NONE here, so the stored
+        // preference could never reach the service and the action was unreachable.
+        RecentsButtonService.updateShortcuts(shortcutFrontLight, shortcutEinkRefresh, shortcutRefreshCycle)
     }
     LaunchedEffect(volumeLongPressMedia) { RecentsButtonService.volumeLongPressMediaEnabled = volumeLongPressMedia }
     LaunchedEffect(hiddenNotiApps) {
@@ -152,7 +203,17 @@ fun KompaktXApp() {
 
     // Track which settings section is expanded
     var showHiddenNotiApps by remember { mutableStateOf(false) }
+    // Expanded while anything is outstanding — then it is the only thing that matters here.
+    var showPermissions by remember(allRequiredGranted) { mutableStateOf(!allRequiredGranted) }
     var showHiddenRecentApps by remember { mutableStateOf(false) }
+
+    // Hold the (correctly themed) empty screen until the stored preferences arrive. Every toggle
+    // below is collected with a hardcoded default as its pre-DataStore value, so rendering now
+    // would briefly show a screen full of defaults and then snap to the real configuration.
+    if (!prefsLoaded) {
+        Box(Modifier.fillMaxSize().background(BG))
+        return
+    }
 
     Column(
         modifier = Modifier
@@ -191,62 +252,75 @@ fun KompaktXApp() {
 
         Spacer(Modifier.height(20.dp))
 
-        // Permissions — section and each row hide once granted
-        if (!allRequiredGranted) {
-            SectionHeader("Permissions")
-            SettingsCard {
-                var first = true
-                if (!hasNotificationAccess) {
-                    PermissionRow("Notification Access", "Required to read notifications",
-                        Icons.Default.Notifications, false
-                    ) { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
-                    first = false
+        // Permissions — always present, so you can see what you have granted and revoke it, not
+        // only what is still outstanding. Collapsed to a count once everything is in place;
+        // expanded by default while anything is missing, since then it is the only thing that
+        // matters on this screen.
+        val grantedCount = listOf(
+            hasNotificationAccess, hasOverlayPermission, hasUsageAccess,
+            hasAccessibility, hasBatteryOptExemption, hasWriteSettings
+        ).count { it }
+        SectionHeader("Permissions")
+        SettingsCard {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { showPermissions = !showPermissions }
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    if (grantedCount == 6) Icons.Default.CheckCircle else Icons.Default.Warning,
+                    null, tint = FG, modifier = Modifier.size(24.dp)
+                )
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("$grantedCount of 6 granted", fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp, color = FG)
+                    Text(
+                        if (grantedCount == 6) "Everything KompaktX needs is enabled"
+                        else "Tap to see what is missing",
+                        fontSize = 12.sp, color = FG
+                    )
                 }
-                if (!hasOverlayPermission) {
-                    if (!first) Divider(color = FG, thickness = 1.dp)
-                    PermissionRow("Display Over Other Apps", "Required for notification panel",
-                        Icons.Default.Layers, false
-                    ) { context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
-                        data = android.net.Uri.parse("package:${context.packageName}")
-                    }) }
-                    first = false
-                }
-                if (!hasUsageAccess) {
-                    if (!first) Divider(color = FG, thickness = 1.dp)
-                    PermissionRow("Usage Access", "Required for recent apps",
-                        Icons.Default.History, false
-                    ) { context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
-                    first = false
-                }
-                if (!hasAccessibility) {
-                    if (!first) Divider(color = FG, thickness = 1.dp)
-                    PermissionRow("Accessibility Service", "Required for Recents button trigger",
-                        Icons.Default.Accessibility, false
-                    ) { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-                    first = false
-                }
-                if (!hasBatteryOptExemption) {
-                    if (!first) Divider(color = FG, thickness = 1.dp)
-                    PermissionRow("Disable Battery Optimization", "Prevents the system from killing the overlay",
-                        Icons.Default.BatteryFull, false
-                    ) { requestIgnoreBatteryOptimizations(context) }
-                    first = false
-                }
-                if (!hasWriteSettings) {
-                    if (!first) Divider(color = FG, thickness = 1.dp)
-                    PermissionRow("Modify System Settings", "Required for brightness, adaptive brightness, and custom tones",
-                        Icons.Default.Tune, false
-                    ) { context.startActivity(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
-                        data = android.net.Uri.parse("package:${context.packageName}")
-                    }) }
-                }
+                Icon(
+                    if (showPermissions) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    null, tint = FG, modifier = Modifier.size(20.dp)
+                )
             }
-            Spacer(Modifier.height(20.dp))
+            if (showPermissions) {
+                Divider(color = FG, thickness = 1.dp)
+                PermissionRow("Notification Access", "Required to read notifications",
+                    Icons.Default.Notifications, hasNotificationAccess
+                ) { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
+                Divider(color = FG, thickness = 1.dp)
+                PermissionRow("Display Over Other Apps", "Required for notification panel",
+                    Icons.Default.Layers, hasOverlayPermission
+                ) { context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                    data = android.net.Uri.parse("package:${context.packageName}")
+                }) }
+                Divider(color = FG, thickness = 1.dp)
+                PermissionRow("Usage Access", "Required for recent apps",
+                    Icons.Default.History, hasUsageAccess
+                ) { context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
+                Divider(color = FG, thickness = 1.dp)
+                PermissionRow("Accessibility Service", "Required for Recents button trigger",
+                    Icons.Default.Accessibility, hasAccessibility
+                ) { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+                Divider(color = FG, thickness = 1.dp)
+                PermissionRow("Disable Battery Optimization", "Prevents the system from killing the overlay",
+                    Icons.Default.BatteryFull, hasBatteryOptExemption
+                ) { requestIgnoreBatteryOptimizations(context) }
+                Divider(color = FG, thickness = 1.dp)
+                PermissionRow("Modify System Settings", "Required for brightness, adaptive brightness, and custom tones",
+                    Icons.Default.Tune, hasWriteSettings
+                ) { context.startActivity(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
+                    data = android.net.Uri.parse("package:${context.packageName}")
+                }) }
+            }
         }
 
-        if (allPermissionsGranted) {
-            Spacer(Modifier.height(20.dp))
-        }
+        Spacer(Modifier.height(20.dp))
 
         // Trigger Settings
         SectionHeader("Notification Tray Shortcut")
@@ -307,7 +381,7 @@ fun KompaktXApp() {
         // Hardware Shortcuts
         SectionHeader("Shortcuts")
         Text(
-            "Assign hardware button shortcuts. Each trigger can only be used once — reassigning auto-swaps. Requires Accessibility Service.",
+            "Assign hardware button shortcuts. Each trigger can only be used once — giving it to one action clears it from the other. Requires Accessibility Service.",
             fontSize = 12.sp, color = FG, modifier = Modifier.padding(bottom = 8.dp)
         )
         SettingsCard {

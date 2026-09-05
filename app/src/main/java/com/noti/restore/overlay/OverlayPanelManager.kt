@@ -617,6 +617,13 @@ object OverlayPanelManager {
         panelCard.addView(tabContent)
         if (placeTabsAtBottom) {
             panelCard.addView(makeThinDivider(context, dp))
+            // Sitting flush against the bottom edge, the strip needs more room beneath it than it
+            // does under content at the top — both to clear the system navigation area and so the
+            // pills don't read as falling off the panel.
+            tabBar.setPadding(
+                tabBar.paddingLeft, tabBar.paddingTop,
+                tabBar.paddingRight, (16 * dp).toInt()
+            )
             panelCard.addView(tabBar)
         }
 
