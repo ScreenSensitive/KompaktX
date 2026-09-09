@@ -2852,6 +2852,14 @@ object OverlayPanelManager {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             val ibg = GradientDrawable().apply { setColor(WHITE); setStroke(borderW, BLACK); cornerRadius = 8 * dp }
             background = ibg; setPadding(padSmall, (6 * dp).toInt(), padSmall, (6 * dp).toInt())
+            setOnClickListener {
+                setHeadsUpFocusable(true)
+                post {
+                    requestFocus()
+                    (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+                        .showSoftInput(this, InputMethodManager.SHOW_IMPLICIT)
+                }
+            }
             if (replyOnEnter) {
                 // A hardware Enter and the IME's own send/done action both count. Declaring the
                 // action lets a soft keyboard show a send key rather than a newline key.
@@ -2908,9 +2916,17 @@ object OverlayPanelManager {
                     setOnClickListener {
                         if (na.isReply) {
                             replyBoxOpen = true; cancelDismissTimer(); replyContainer.visibility = View.VISIBLE
-                            actionsRow.visibility = View.GONE; setHeadsUpFocusable(true); replyInput.requestFocus()
-                            (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
-                                .showSoftInput(replyInput, InputMethodManager.SHOW_IMPLICIT)
+                            actionsRow.visibility = View.GONE
+                            setHeadsUpFocusable(true)
+                            // Focus and the IME request have to wait for the window to actually
+                            // become focusable — that is an async WindowManager update, and asking
+                            // in the same frame gets dropped, which is why the keyboard often
+                            // needed a second tap. Post it so it lands after the flags apply.
+                            replyInput.post {
+                                replyInput.requestFocus()
+                                (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+                                    .showSoftInput(replyInput, InputMethodManager.SHOW_IMPLICIT)
+                            }
                         } else {
                             try { KompaktXListener.executeAction(na) } catch (_: Exception) {}
                             removeHeadsUp()

@@ -223,10 +223,17 @@ class KompaktXListener : NotificationListenerService() {
     private fun createPopupData(sbn: StatusBarNotification): NotificationPopupData {
         val notification = sbn.notification
         val extras = notification.extras
-        val title = try {
+        val rawTitle = try {
             extras.getString(Notification.EXTRA_TITLE)
                 ?: extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
         } catch (_: Exception) { "" }
+        // In a group chat EXTRA_TITLE is the conversation name and the sender is only on the
+        // message itself, so name them both. One-to-one threads already title with the contact,
+        // and there the sender and the title are the same — so it is not repeated.
+        val sender = latestMessageSender(notification)
+        val title = if (!sender.isNullOrBlank() && !sender.equals(rawTitle, ignoreCase = true)) {
+            if (rawTitle.isBlank()) sender else "$sender · $rawTitle"
+        } else rawTitle
         val text = latestMessageText(notification, extras)
         val actions = try {
             notification.actions?.mapNotNull { action ->
@@ -281,6 +288,17 @@ class KompaktXListener : NotificationListenerService() {
          * landed. Prefer the newest structured entry, and only fall back to EXTRA_TEXT when a
          * notification carries no message history at all.
          */
+        /** Display name on the newest MessagingStyle message, when the notification carries one. */
+        fun latestMessageSender(notification: Notification): String? {
+            return try {
+                val messages = NotificationCompat.MessagingStyle
+                    .extractMessagingStyleFromNotification(notification)?.messages
+                    ?: return null
+                val newest = messages.maxByOrNull { it.timestamp } ?: messages.lastOrNull()
+                newest?.person?.name?.toString()
+            } catch (_: Exception) { null }
+        }
+
         fun latestMessageText(notification: Notification, extras: Bundle): String {
             try {
                 val messages = NotificationCompat.MessagingStyle
