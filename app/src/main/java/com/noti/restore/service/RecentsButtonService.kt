@@ -228,10 +228,11 @@ class RecentsButtonService : AccessibilityService() {
                 if (longPressBackAction.isNotEmpty()) {
                     return handleBackAdvanced(event)
                 }
-                // Default: close panel if open
+                // Default: peel back one overlay layer — the long-press menu if it is up,
+                // otherwise the panel itself.
                 if (OverlayPanelManager.isPanelShowing) {
                     if (event.action == KeyEvent.ACTION_UP) {
-                        OverlayPanelManager.closePanelIfOpen()
+                        OverlayPanelManager.onBackPressed()
                     }
                     return true
                 }
@@ -350,9 +351,9 @@ class RecentsButtonService : AccessibilityService() {
                     return true
                 }
 
-                // Short press: close panel if open, otherwise perform system back
+                // Short press: peel back one overlay layer, otherwise perform system back
                 if (OverlayPanelManager.isPanelShowing) {
-                    OverlayPanelManager.closePanelIfOpen()
+                    OverlayPanelManager.onBackPressed()
                 } else {
                     performGlobalAction(GLOBAL_ACTION_BACK)
                 }

@@ -71,6 +71,8 @@ object OverlayPanelManager {
     private var brightnessModeObserver: ContentObserver? = null  // Watches Adaptive Brightness on/off
     private var panelView: View? = null         // The root FrameLayout attached to WindowManager
     private var panelContentView: ViewGroup? = null  // The inner LinearLayout we swap content in
+    /** The recents long-press menu while it is up, so BACK can dismiss it before the panel. */
+    private var appActionsDialog: View? = null
     private var headsUpView: View? = null
     private var headsUpParams: WindowManager.LayoutParams? = null
     private val headsUpQueue = ArrayDeque<NotificationPopupData>()
@@ -308,6 +310,25 @@ object OverlayPanelManager {
         handler.post {
             if (panelView != null) dismissPanel() else showPanel(context)
         }
+    }
+
+    /**
+     * Handle a BACK press against the overlay, innermost layer first.
+     *
+     * Returns true when something was dismissed. The long-press menu sits inside the panel's own
+     * window rather than in a window of its own, so nothing else would peel it off separately —
+     * without this, one BACK took the menu and the panel together.
+     */
+    fun onBackPressed(): Boolean {
+        appActionsDialog?.let { dialog ->
+            handler.post {
+                try { (panelView as? FrameLayout)?.removeView(dialog) } catch (_: Exception) {}
+            }
+            appActionsDialog = null
+            return true
+        }
+        if (panelView != null) { closePanelIfOpen(); return true }
+        return false
     }
 
     fun closePanelIfOpen() {
@@ -873,6 +894,7 @@ object OverlayPanelManager {
     }
 
     private fun dismissPanel() {
+        appActionsDialog = null
         stopClockUpdates()
         panelView?.let { view ->
             try { windowManager?.removeView(view) } catch (_: Exception) {}
@@ -1791,7 +1813,10 @@ object OverlayPanelManager {
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
             )
         }
-        fun close() { try { root.removeView(holder) } catch (_: Exception) {} }
+        fun close() {
+            try { root.removeView(holder) } catch (_: Exception) {}
+            if (appActionsDialog === holder) appActionsDialog = null
+        }
         holder.setOnClickListener { close() }
 
         fun action(text: String, subtitle: String?, onTap: () -> Unit) {
@@ -1867,6 +1892,7 @@ object OverlayPanelManager {
             marginStart = (24 * dp).toInt(); marginEnd = (24 * dp).toInt()
         })
         root.addView(holder)
+        appActionsDialog = holder
     }
 
     /** Simple gear glyph, drawn to match the panel's other 1-bit icons. */
