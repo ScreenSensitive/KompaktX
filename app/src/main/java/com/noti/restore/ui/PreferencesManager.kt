@@ -97,7 +97,17 @@ class PreferencesManager(private val context: Context) {
     val hiddenRecentApps: Flow<Set<String>> = context.dataStore.data.map { it[HIDDEN_RECENT_APPS] ?: emptySet() }
     val autoStart: Flow<Boolean> = context.dataStore.data.map { it[AUTO_START] ?: true }
     val hapticsEnabled: Flow<Boolean> = context.dataStore.data.map { it[HAPTICS_ENABLED] ?: true }
-    val headsUpDuration: Flow<Int> = context.dataStore.data.map { it[HEADS_UP_DURATION] ?: 5000 }
+    /**
+     * Zero means stay until dismissed. Values from the older 2s/8s presets are folded onto the
+     * nearest surviving one so a stored setting cannot leave the picker with nothing selected.
+     */
+    val headsUpDuration: Flow<Int> = context.dataStore.data.map {
+        when (val v = it[HEADS_UP_DURATION] ?: 5000) {
+            2000 -> 3000
+            8000 -> 10000
+            else -> v
+        }
+    }
     val replyOnEnter: Flow<Boolean> = context.dataStore.data.map { it[REPLY_ON_ENTER] ?: false }
     val showLocationToggle: Flow<Boolean> = context.dataStore.data.map { it[SHOW_LOCATION_TOGGLE] ?: false }
     val triggerMode: Flow<Int> = context.dataStore.data.map { it[TRIGGER_MODE] ?: TriggerMode.SWIPE_LEFT_EDGE }

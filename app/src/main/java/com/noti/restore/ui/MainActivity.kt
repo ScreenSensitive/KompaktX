@@ -764,7 +764,7 @@ private fun HeadsUpScreen(
             SettingsCard {
                 Column(Modifier.padding(12.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf(2000 to "2s", 3000 to "3s", 5000 to "5s", 8000 to "8s", 10000 to "10s")
+                        listOf(3000 to "3s", 5000 to "5s", 10000 to "10s", 0 to "Stay")
                             .forEach { (ms, label) ->
                                 val selected = durationMs == ms
                                 Box(
@@ -785,7 +785,12 @@ private fun HeadsUpScreen(
                             }
                     }
                     Text(
-                        "Touching a popup pauses this, and opening the reply box stops it entirely.",
+                        if (durationMs == 0)
+                            "Popups stay until you swipe them away, tap the close button, or act " +
+                                "on them. Nothing dismisses them on its own."
+                        else
+                            "Touching a popup pauses this, expanding it stops it, and opening the " +
+                                "reply box stops it entirely.",
                         fontSize = 12.sp, color = FG, modifier = Modifier.padding(top = 10.dp)
                     )
                 }
