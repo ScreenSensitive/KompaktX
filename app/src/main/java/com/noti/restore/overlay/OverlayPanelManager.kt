@@ -2854,11 +2854,7 @@ object OverlayPanelManager {
             background = ibg; setPadding(padSmall, (6 * dp).toInt(), padSmall, (6 * dp).toInt())
             setOnClickListener {
                 setHeadsUpFocusable(true)
-                post {
-                    requestFocus()
-                    (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
-                        .showSoftInput(this, InputMethodManager.SHOW_IMPLICIT)
-                }
+                focusReplyInput(context, this)
             }
             if (replyOnEnter) {
                 // A hardware Enter and the IME's own send/done action both count. Declaring the
@@ -2918,15 +2914,7 @@ object OverlayPanelManager {
                             replyBoxOpen = true; cancelDismissTimer(); replyContainer.visibility = View.VISIBLE
                             actionsRow.visibility = View.GONE
                             setHeadsUpFocusable(true)
-                            // Focus and the IME request have to wait for the window to actually
-                            // become focusable — that is an async WindowManager update, and asking
-                            // in the same frame gets dropped, which is why the keyboard often
-                            // needed a second tap. Post it so it lands after the flags apply.
-                            replyInput.post {
-                                replyInput.requestFocus()
-                                (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
-                                    .showSoftInput(replyInput, InputMethodManager.SHOW_IMPLICIT)
-                            }
+                            focusReplyInput(context, replyInput)
                         } else {
                             try { KompaktXListener.executeAction(na) } catch (_: Exception) {}
                             removeHeadsUp()
@@ -2989,11 +2977,40 @@ object OverlayPanelManager {
      * duration of the reply, which is the right trade: you cannot type into a window that will
      * not accept focus.
      */
+    /**
+     * Put the cursor in the reply field and raise the keyboard.
+     *
+     * Scheduled on the handler rather than the view: opening a reply re-hosts the popup in a
+     * different window, so the view is detached and re-attached and anything posted to the view
+     * itself is discarded. The retry covers the gap before the new window has taken focus — a
+     * single request made too early is simply dropped, which is what left the field waiting for a
+     * manual tap.
+     */
+    private fun focusReplyInput(context: Context, input: EditText) {
+        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        fun attempt() {
+            input.isFocusableInTouchMode = true
+            input.requestFocus()
+            input.setSelection(input.text?.length ?: 0)
+            imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+        }
+        handler.post { attempt() }
+        handler.postDelayed({ if (replyBoxOpen && !input.isFocused) attempt() }, 120)
+    }
+
     private fun setHeadsUpFocusable(focusable: Boolean) {
         val p = headsUpParams ?: return
         val v = headsUpView ?: return
         p.flags = if (focusable) p.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
         else p.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+
+        if (focusable) {
+            // Telling the window manager the IME should be visible when this window takes focus
+            // is what actually raises the keyboard; showSoftInput() alone is advisory and is
+            // routinely ignored for an overlay that has only just become focusable.
+            p.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE or
+                WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+        }
 
         if (focusable && headsUpUsingAccessibility) {
             try {
