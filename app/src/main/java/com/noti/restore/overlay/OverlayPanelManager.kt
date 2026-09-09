@@ -2979,10 +2979,41 @@ object OverlayPanelManager {
         else try { windowManager?.updateViewLayout(v, p) } catch (_: Exception) {}
     }
 
+    /**
+     * Make the popup able to take keyboard focus, so the IME will open for a reply.
+     *
+     * The popup is normally a TYPE_ACCESSIBILITY_OVERLAY, which is what lets it draw above the
+     * status bar — but such a window cannot hold IME focus, so clearing FLAG_NOT_FOCUSABLE on one
+     * achieves nothing and the keyboard never appears. To type, it has to be re-hosted as an
+     * ordinary TYPE_APPLICATION_OVERLAY. That gives up drawing over the status bar for the
+     * duration of the reply, which is the right trade: you cannot type into a window that will
+     * not accept focus.
+     */
     private fun setHeadsUpFocusable(focusable: Boolean) {
-        val p = headsUpParams ?: return; val v = headsUpView ?: return
+        val p = headsUpParams ?: return
+        val v = headsUpView ?: return
         p.flags = if (focusable) p.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
         else p.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+
+        if (focusable && headsUpUsingAccessibility) {
+            try {
+                com.noti.restore.service.RecentsButtonService.removeHeadsUp(v)
+                p.type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_SYSTEM_ALERT
+                if (windowManager == null) {
+                    windowManager = v.context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                }
+                windowManager?.addView(v, p)
+                headsUpUsingAccessibility = false
+            } catch (_: Exception) {
+                // If re-hosting fails the popup is gone; drop the reference rather than leaving a
+                // dangling view that later removal attempts would throw on.
+                headsUpView = null; headsUpParams = null; headsUpUsingAccessibility = false
+                return
+            }
+            return
+        }
         headsUpUpdate(v, p)
     }
 
