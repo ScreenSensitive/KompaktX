@@ -31,6 +31,7 @@ import android.service.notification.StatusBarNotification
 import android.text.TextUtils
 import android.util.Log
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -82,6 +83,8 @@ object OverlayPanelManager {
     )
     private var dismissRunnable: Runnable? = null
     private var replyBoxOpen = false
+    /** Send action for the popup currently on screen, shared by the button and the Enter key. */
+    private var sendReplyNow: (() -> Unit)? = null
 
     // Swipe detection
     private var swipeStartX = 0f
@@ -109,6 +112,10 @@ object OverlayPanelManager {
      * where a popup that only flashes for a moment may never actually be read.
      */
     var headsUpQueueMode = false
+    /** Send a popup reply on Enter, instead of only via the send button. */
+    var replyOnEnter = false
+    /** Offer a control to expand a truncated popup to its full text. */
+    var headsUpExpandable = false
     var showLocationToggle = false
     var hiddenNotiApps: Set<String> = emptySet()
     var hiddenRecentApps: Set<String> = emptySet()
@@ -878,6 +885,9 @@ object OverlayPanelManager {
         liveSliderThumb = null
         liveSliderFill = null
         liveValueText = null
+        liveAdaptivePill = null
+        liveAdaptiveLabel = null
+        liveAdaptiveBg = null
     }
 
     // ─── Notification Entry (no card outline, just content with dividers) ──
@@ -1018,6 +1028,9 @@ object OverlayPanelManager {
     private var liveSliderFill: View? = null
     private var liveSliderThumbSize = 0
     private var liveValueText: TextView? = null
+    private var liveAdaptivePill: View? = null
+    private var liveAdaptiveLabel: TextView? = null
+    private var liveAdaptiveBg: ((Boolean) -> android.graphics.drawable.Drawable)? = null
 
     /** Load saved brightness from SharedPreferences */
     fun loadSavedBrightness(context: Context) {
@@ -2111,6 +2124,10 @@ object OverlayPanelManager {
         val pill = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
             background = bgFor(startOn)
+            // Kept so the pill can be refreshed in place — dragging the brightness slider takes
+            // the system out of adaptive mode, and rebuilding the whole panel to reflect that
+            // would be a full e-ink redraw mid-drag.
+            liveAdaptivePill = this
             setPadding((14 * dp).toInt(), (10 * dp).toInt(), (14 * dp).toInt(), (10 * dp).toInt())
             setOnClickListener {
                 tapFeedback(context)
@@ -2131,6 +2148,8 @@ object OverlayPanelManager {
             }
         }
         pill.addView(label)
+        liveAdaptiveLabel = label
+        liveAdaptiveBg = { on -> bgFor(on) }
 
         row.addView(TextView(context).apply {
             text = "Adaptive brightness"
@@ -2664,7 +2683,11 @@ object OverlayPanelManager {
             // A repeat of something already showing or waiting replaces that entry rather than
             // appearing twice — messaging apps re-post the same key on every new message.
             headsUpQueue.removeAll { it.key == data.key }
-            if (headsUpQueueMode && headsUpShowingKey != null && headsUpShowingKey != data.key) {
+            val busy = headsUpShowingKey != null && headsUpShowingKey != data.key
+            // Never tear down a reply the user is in the middle of typing, whichever mode is set:
+            // the popup owns an open text field and unsaved input, so an arriving notification
+            // waits its turn rather than taking the screen.
+            if (busy && (headsUpQueueMode || replyBoxOpen)) {
                 headsUpQueue.addLast(data)
                 while (headsUpQueue.size > HEADS_UP_QUEUE_MAX) headsUpQueue.removeFirst()
                 return@post
@@ -2673,9 +2696,15 @@ object OverlayPanelManager {
         }
     }
 
-    /** Put a popup on screen immediately, replacing whatever is there. */
+    /**
+     * Put a popup on screen immediately, replacing whatever is there.
+     *
+     * Runs directly on the handler thread rather than posting again: callers already post, and the
+     * extra hop meant headsUpShowingKey was still unset when the next notification of the same
+     * batch tested it — so a burst all decided nothing was showing and skipped the queue.
+     */
     private fun showHeadsUpNow(context: Context, data: NotificationPopupData) {
-        handler.post {
+        run {
             removeHeadsUp(advanceQueue = false); replyBoxOpen = false
             headsUpShowingKey = data.key
             try {
@@ -2754,10 +2783,46 @@ object OverlayPanelManager {
         })
         card.addView(headerRow)
         if (data.text.isNotBlank()) {
-            card.addView(TextView(context).apply {
+            val body = TextView(context).apply {
                 text = data.text; setTextColor(BLACK); textSize = baseTextSize + 2f; maxLines = 3
                 ellipsize = TextUtils.TruncateAt.END; setPadding(0, (4 * dp).toInt(), 0, 0)
-            })
+            }
+            card.addView(body)
+            if (headsUpExpandable) {
+                // Only offered once the text is known to be clipped — measuring after layout is
+                // the only way to tell, since three lines of a narrow card is not a character
+                // count. Expanding also stops the dismiss timer: you asked to read it.
+                val more = TextView(context).apply {
+                    text = "Show more"
+                    setTextColor(BLACK); textSize = baseTinySize; typeface = Typeface.DEFAULT_BOLD
+                    setPadding(0, (6 * dp).toInt(), 0, (2 * dp).toInt())
+                    visibility = View.GONE
+                    minHeight = (32 * dp).toInt()
+                }
+                card.addView(more)
+                body.viewTreeObserver.addOnGlobalLayoutListener(
+                    object : ViewTreeObserver.OnGlobalLayoutListener {
+                        override fun onGlobalLayout() {
+                            body.viewTreeObserver.removeOnGlobalLayoutListener(this)
+                            val clipped = body.layout?.let { l ->
+                                l.lineCount > 0 && l.getEllipsisCount(l.lineCount - 1) > 0
+                            } ?: false
+                            if (clipped) more.visibility = View.VISIBLE
+                        }
+                    })
+                more.setOnClickListener {
+                    tapFeedback(context)
+                    if (body.maxLines == 3) {
+                        body.maxLines = Int.MAX_VALUE
+                        more.text = "Show less"
+                        cancelDismissTimer()
+                    } else {
+                        body.maxLines = 3
+                        more.text = "Show more"
+                        resetDismissTimer()
+                    }
+                }
+            }
         }
         // Reply
         val replyContainer = LinearLayout(context).apply {
@@ -2769,29 +2834,43 @@ object OverlayPanelManager {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             val ibg = GradientDrawable().apply { setColor(WHITE); setStroke(borderW, BLACK); cornerRadius = 8 * dp }
             background = ibg; setPadding(padSmall, (6 * dp).toInt(), padSmall, (6 * dp).toInt())
+            if (replyOnEnter) {
+                // A hardware Enter and the IME's own send/done action both count. Declaring the
+                // action lets a soft keyboard show a send key rather than a newline key.
+                imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEND
+                setOnEditorActionListener { _, actionId, event ->
+                    val enterPressed = event != null &&
+                        event.keyCode == KeyEvent.KEYCODE_ENTER &&
+                        event.action == KeyEvent.ACTION_DOWN
+                    if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEND || enterPressed) {
+                        sendReplyNow?.invoke(); true
+                    } else false
+                }
+            }
         }
         replyContainer.addView(replyInput)
+        sendReplyNow = {
+            val rt = replyInput.text.toString()
+            if (rt.isNotBlank()) {
+                data.replyAction?.let { a ->
+                    if (KompaktXListener.sendReply(a, rt)) {
+                        replyInput.setText("")
+                        (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+                            .hideSoftInputFromWindow(replyInput.windowToken, 0)
+                        setHeadsUpFocusable(false); replyBoxOpen = false; replyContainer.visibility = View.GONE
+                        card.addView(TextView(context).apply {
+                            setText("Sent"); setTextColor(BLACK); textSize = baseSmallSize; gravity = Gravity.CENTER
+                        })
+                        handler.postDelayed({ removeHeadsUp() }, 1500)
+                    }
+                }
+            }
+        }
         val sendBtnBg = GradientDrawable().apply { setColor(BLACK); cornerRadius = 8 * dp }
         replyContainer.addView(TextView(context).apply {
             text = "\u27A4"; setTextColor(WHITE); textSize = baseTitleSize + 2f; gravity = Gravity.CENTER; background = sendBtnBg
             layoutParams = LinearLayout.LayoutParams((36 * dp).toInt(), (36 * dp).toInt()).apply { marginStart = padSmall }
-            setOnClickListener {
-                val rt = replyInput.text.toString()
-                if (rt.isNotBlank()) {
-                    data.replyAction?.let { a ->
-                        if (KompaktXListener.sendReply(a, rt)) {
-                            replyInput.setText("")
-                            (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
-                                .hideSoftInputFromWindow(replyInput.windowToken, 0)
-                            setHeadsUpFocusable(false); replyBoxOpen = false; replyContainer.visibility = View.GONE
-                            card.addView(TextView(context).apply {
-                                setText("Sent"); setTextColor(BLACK); textSize = baseSmallSize; gravity = Gravity.CENTER
-                            })
-                            handler.postDelayed({ removeHeadsUp() }, 1500)
-                        }
-                    }
-                }
-            }
+            setOnClickListener { sendReplyNow?.invoke() }
         })
         card.addView(replyContainer)
         // Actions
@@ -2939,6 +3018,7 @@ object OverlayPanelManager {
      */
     private fun syncBrightnessOverrides(context: Context, force: Boolean = false) {
         val resolver = context.contentResolver
+        updateAdaptivePillUI(isAdaptiveBrightnessOn(resolver))
         if (isAdaptiveBrightnessOn(resolver)) {
             // The OS owns the backlight now, which necessarily ends an "off" state.
             if (frontLightOff) {
@@ -3033,6 +3113,15 @@ object OverlayPanelManager {
             lp.screenBrightness = brightness
             windowManager?.updateViewLayout(view, lp)
         } catch (_: Exception) {}
+    }
+
+    /** Repaint the panel's Auto pill to match the system, without rebuilding the panel. */
+    private fun updateAdaptivePillUI(on: Boolean) {
+        val pill = liveAdaptivePill ?: return
+        handler.post {
+            liveAdaptiveBg?.let { pill.background = it(on) }
+            liveAdaptiveLabel?.setTextColor(if (on) WHITE else BLACK)
+        }
     }
 
     /** True when the system's own Adaptive Brightness is currently on. */

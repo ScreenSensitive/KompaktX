@@ -65,6 +65,8 @@ class PreferencesManager(private val context: Context) {
         private val HAPTICS_ENABLED = booleanPreferencesKey("haptics_enabled")
         private val HEADS_UP_DURATION = intPreferencesKey("heads_up_duration_ms")
         private val HEADS_UP_QUEUE = booleanPreferencesKey("heads_up_queue")
+        private val REPLY_ON_ENTER = booleanPreferencesKey("reply_on_enter")
+        private val HEADS_UP_EXPANDABLE = booleanPreferencesKey("heads_up_expandable")
         private val SHOW_LOCATION_TOGGLE = booleanPreferencesKey("show_location_toggle")
         private val TRIGGER_MODE = intPreferencesKey("trigger_mode")
         private val FONT_SIZE_OFFSET = intPreferencesKey("font_size_offset")
@@ -100,6 +102,8 @@ class PreferencesManager(private val context: Context) {
     val headsUpDuration: Flow<Int> = context.dataStore.data.map { it[HEADS_UP_DURATION] ?: 5000 }
     /** Default false — replacing is what Android itself does. */
     val headsUpQueue: Flow<Boolean> = context.dataStore.data.map { it[HEADS_UP_QUEUE] ?: false }
+    val replyOnEnter: Flow<Boolean> = context.dataStore.data.map { it[REPLY_ON_ENTER] ?: false }
+    val headsUpExpandable: Flow<Boolean> = context.dataStore.data.map { it[HEADS_UP_EXPANDABLE] ?: false }
     val showLocationToggle: Flow<Boolean> = context.dataStore.data.map { it[SHOW_LOCATION_TOGGLE] ?: false }
     val triggerMode: Flow<Int> = context.dataStore.data.map { it[TRIGGER_MODE] ?: TriggerMode.SWIPE_LEFT_EDGE }
     val fontSizeOffset: Flow<Int> = context.dataStore.data.map { it[FONT_SIZE_OFFSET] ?: 0 }
@@ -120,6 +124,8 @@ class PreferencesManager(private val context: Context) {
     suspend fun setHapticsEnabled(enabled: Boolean) { context.dataStore.edit { it[HAPTICS_ENABLED] = enabled } }
     suspend fun setHeadsUpDuration(ms: Int) { context.dataStore.edit { it[HEADS_UP_DURATION] = ms } }
     suspend fun setHeadsUpQueue(enabled: Boolean) { context.dataStore.edit { it[HEADS_UP_QUEUE] = enabled } }
+    suspend fun setReplyOnEnter(enabled: Boolean) { context.dataStore.edit { it[REPLY_ON_ENTER] = enabled } }
+    suspend fun setHeadsUpExpandable(enabled: Boolean) { context.dataStore.edit { it[HEADS_UP_EXPANDABLE] = enabled } }
     suspend fun setShowLocationToggle(enabled: Boolean) { context.dataStore.edit { it[SHOW_LOCATION_TOGGLE] = enabled } }
     suspend fun setTriggerMode(mode: Int) { context.dataStore.edit { it[TRIGGER_MODE] = mode } }
     suspend fun setFontSizeOffset(offset: Int) { context.dataStore.edit { it[FONT_SIZE_OFFSET] = offset.coerceIn(-2, 4) } }

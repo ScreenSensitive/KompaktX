@@ -180,6 +180,8 @@ fun KompaktXApp() {
     val hapticsEnabled by prefs.hapticsEnabled.collectAsState(initial = true)
     val headsUpDuration by prefs.headsUpDuration.collectAsState(initial = 5000)
     val headsUpQueue by prefs.headsUpQueue.collectAsState(initial = false)
+    val replyOnEnter by prefs.replyOnEnter.collectAsState(initial = false)
+    val headsUpExpandable by prefs.headsUpExpandable.collectAsState(initial = false)
     var showHeadsUpPage by remember { mutableStateOf(false) }
     BackHandler(enabled = showHeadsUpPage) { showHeadsUpPage = false }
 
@@ -188,9 +190,13 @@ fun KompaktXApp() {
             enabled = headsUpEnabled,
             durationMs = headsUpDuration,
             queueMode = headsUpQueue,
+            replyOnEnter = replyOnEnter,
+            expandable = headsUpExpandable,
             onToggle = { scope.launch { prefs.setHeadsUpEnabled(it) } },
             onDuration = { scope.launch { prefs.setHeadsUpDuration(it) } },
             onQueueMode = { scope.launch { prefs.setHeadsUpQueue(it) } },
+            onReplyOnEnter = { scope.launch { prefs.setReplyOnEnter(it) } },
+            onExpandable = { scope.launch { prefs.setHeadsUpExpandable(it) } },
             onBack = { showHeadsUpPage = false }
         )
         return
@@ -726,9 +732,13 @@ private fun HeadsUpScreen(
     enabled: Boolean,
     durationMs: Int,
     queueMode: Boolean,
+    replyOnEnter: Boolean,
+    expandable: Boolean,
     onToggle: (Boolean) -> Unit,
     onDuration: (Int) -> Unit,
     onQueueMode: (Boolean) -> Unit,
+    onReplyOnEnter: (Boolean) -> Unit,
+    onExpandable: (Boolean) -> Unit,
     onBack: () -> Unit
 ) {
     Column(
@@ -751,6 +761,14 @@ private fun HeadsUpScreen(
         SettingsCard {
             ToggleRow("Show Popups", "Appear over whatever you are using",
                 Icons.Default.NotificationsActive, enabled) { onToggle(it) }
+            if (enabled) {
+                Divider(color = FG, thickness = 1.dp)
+                ToggleRow("Expandable", "Offer Show more when the text is cut off",
+                    Icons.Default.UnfoldMore, expandable) { onExpandable(it) }
+                Divider(color = FG, thickness = 1.dp)
+                ToggleRow("Send Reply on Enter", "Otherwise only the send button sends",
+                    Icons.Default.KeyboardReturn, replyOnEnter) { onReplyOnEnter(it) }
+            }
         }
 
         if (enabled) {

@@ -103,6 +103,8 @@ class OverlayService : Service() {
         watch(prefs.hapticsEnabled) { OverlayPanelManager.hapticsEnabled = it }
         watch(prefs.headsUpDuration) { OverlayPanelManager.headsUpDurationMs = it.toLong() }
         watch(prefs.headsUpQueue) { OverlayPanelManager.headsUpQueueMode = it }
+        watch(prefs.replyOnEnter) { OverlayPanelManager.replyOnEnter = it }
+        watch(prefs.headsUpExpandable) { OverlayPanelManager.headsUpExpandable = it }
         watch(prefs.showLocationToggle) { OverlayPanelManager.showLocationToggle = it }
         watch(prefs.hiddenRecentApps) { OverlayPanelManager.hiddenRecentApps = it }
         watch(prefs.hiddenNotiApps) {
