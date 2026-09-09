@@ -2988,9 +2988,6 @@ object OverlayPanelManager {
 
     private fun startDismissTimer() {
         cancelDismissTimer()
-        // Zero means stay until dismissed — no timer at all, rather than a very long one, so
-        // nothing is left pending to fire after the popup has already been swiped away.
-        if (headsUpDurationMs <= 0L) return
         dismissRunnable = Runnable { removeHeadsUp() }
         handler.postDelayed(dismissRunnable!!, headsUpDurationMs)
     }
