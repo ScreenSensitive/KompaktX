@@ -108,6 +108,15 @@ object OverlayPanelManager {
     var hapticsEnabled = true
     /** How long a heads-up popup stays on screen, in milliseconds. */
     var headsUpDurationMs = 5000L
+    /**
+     * Hold popups back and show them one at a time, instead of the newest taking the screen.
+     *
+     * Off by default because replacing is what Android does. Note this cannot separate messages
+     * from one conversation: a messaging app re-posts the same notification key per thread, and
+     * same-key arrivals replace their earlier entry by design rather than stacking.
+     */
+    var headsUpQueueMode = false
+
     /** Send a popup reply on Enter, instead of only via the send button. */
     var replyOnEnter = false
     var showLocationToggle = false
@@ -2701,11 +2710,11 @@ object OverlayPanelManager {
             // A repeat of something already showing or waiting replaces that entry rather than
             // appearing twice — messaging apps re-post the same key on every new message.
             headsUpQueue.removeAll { it.key == data.key }
-            // Newest wins, as Android's own heads-up does — with one exception: never tear down a
-            // reply being typed. That popup owns a focused field and unsaved text, so the arriving
-            // notification waits and is shown once the reply is done.
+            // Queue mode holds arrivals back; otherwise newest wins, as Android's own heads-up
+            // does. Either way a reply being typed is never torn down — that popup owns a focused
+            // field and unsaved text, so the newcomer waits until the reply is done.
             val busy = headsUpShowingKey != null && headsUpShowingKey != data.key
-            if (busy && replyBoxOpen) {
+            if (busy && (headsUpQueueMode || replyBoxOpen)) {
                 headsUpQueue.addLast(data)
                 while (headsUpQueue.size > HEADS_UP_QUEUE_MAX) headsUpQueue.removeFirst()
                 return@post

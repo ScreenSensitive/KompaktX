@@ -179,6 +179,7 @@ fun KompaktXApp() {
     val autoStart by prefs.autoStart.collectAsState(initial = true)
     val hapticsEnabled by prefs.hapticsEnabled.collectAsState(initial = true)
     val headsUpDuration by prefs.headsUpDuration.collectAsState(initial = 5000)
+    val headsUpQueue by prefs.headsUpQueue.collectAsState(initial = false)
     val replyOnEnter by prefs.replyOnEnter.collectAsState(initial = true)
     var showHeadsUpPage by remember { mutableStateOf(false) }
     BackHandler(enabled = showHeadsUpPage) { showHeadsUpPage = false }
@@ -187,9 +188,11 @@ fun KompaktXApp() {
         HeadsUpScreen(
             enabled = headsUpEnabled,
             durationMs = headsUpDuration,
+            queueMode = headsUpQueue,
             replyOnEnter = replyOnEnter,
             onToggle = { scope.launch { prefs.setHeadsUpEnabled(it) } },
             onDuration = { scope.launch { prefs.setHeadsUpDuration(it) } },
+            onQueueMode = { scope.launch { prefs.setHeadsUpQueue(it) } },
             onReplyOnEnter = { scope.launch { prefs.setReplyOnEnter(it) } },
             onBack = { showHeadsUpPage = false }
         )
@@ -725,9 +728,11 @@ fun KompaktXApp() {
 private fun HeadsUpScreen(
     enabled: Boolean,
     durationMs: Int,
+    queueMode: Boolean,
     replyOnEnter: Boolean,
     onToggle: (Boolean) -> Unit,
     onDuration: (Int) -> Unit,
+    onQueueMode: (Boolean) -> Unit,
     onReplyOnEnter: (Boolean) -> Unit,
     onBack: () -> Unit
 ) {
@@ -795,12 +800,43 @@ private fun HeadsUpScreen(
             Spacer(Modifier.height(20.dp))
             SectionHeader("When several arrive at once")
             SettingsCard {
-                Text(
-                    "The newest popup takes the screen straight away, as Android does. A reply you " +
-                        "are part way through typing is the one exception — that popup is left " +
-                        "alone and the new one waits until you are done.",
-                    fontSize = 13.sp, color = FG, modifier = Modifier.padding(16.dp)
-                )
+                Column(Modifier.padding(12.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(false to "Replace", true to "Queue").forEach { (queue, label) ->
+                            val selected = queueMode == queue
+                            Box(
+                                modifier = Modifier.weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .border(2.dp, FG, RoundedCornerShape(8.dp))
+                                    .then(
+                                        if (selected) Modifier.background(FG, RoundedCornerShape(8.dp))
+                                        else Modifier
+                                    )
+                                    .clickable { onQueueMode(queue) }
+                                    .heightIn(min = 44.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(label, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                                    color = if (selected) BG else FG)
+                            }
+                        }
+                    }
+                    Text(
+                        if (queueMode)
+                            "Each popup is shown in turn for the full time. Up to five wait; beyond " +
+                                "that the oldest is dropped. Messages from one conversation still " +
+                                "collapse into a single popup — apps re-post one notification per " +
+                                "thread rather than one per message."
+                        else
+                            "The newest popup takes the screen straight away, as Android does. " +
+                                "Earlier ones are not shown again; they stay in the tray.",
+                        fontSize = 12.sp, color = FG, modifier = Modifier.padding(top = 10.dp)
+                    )
+                    Text(
+                        "A reply you are part way through typing is never interrupted, in either mode.",
+                        fontSize = 12.sp, color = FG, modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
             }
         }
         Spacer(Modifier.height(32.dp))
