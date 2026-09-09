@@ -75,6 +75,7 @@ object OverlayPanelManager {
     private var appActionsDialog: View? = null
     private var headsUpView: View? = null
     private var headsUpParams: WindowManager.LayoutParams? = null
+    /** Holds a notification that arrived while a reply was being typed. */
     private val headsUpQueue = ArrayDeque<NotificationPopupData>()
     private var headsUpShowingKey: String? = null
     private val handler = Handler(Looper.getMainLooper())
@@ -107,17 +108,8 @@ object OverlayPanelManager {
     var hapticsEnabled = true
     /** How long a heads-up popup stays on screen, in milliseconds. */
     var headsUpDurationMs = 5000L
-    /**
-     * Hold popups back and show them one at a time, instead of the newest taking the screen.
-     *
-     * Off by default because replacing is what Android itself does; queueing suits a slow display
-     * where a popup that only flashes for a moment may never actually be read.
-     */
-    var headsUpQueueMode = false
     /** Send a popup reply on Enter, instead of only via the send button. */
     var replyOnEnter = false
-    /** Offer a control to expand a truncated popup to its full text. */
-    var headsUpExpandable = false
     var showLocationToggle = false
     var hiddenNotiApps: Set<String> = emptySet()
     var hiddenRecentApps: Set<String> = emptySet()
@@ -2709,11 +2701,11 @@ object OverlayPanelManager {
             // A repeat of something already showing or waiting replaces that entry rather than
             // appearing twice — messaging apps re-post the same key on every new message.
             headsUpQueue.removeAll { it.key == data.key }
+            // Newest wins, as Android's own heads-up does — with one exception: never tear down a
+            // reply being typed. That popup owns a focused field and unsaved text, so the arriving
+            // notification waits and is shown once the reply is done.
             val busy = headsUpShowingKey != null && headsUpShowingKey != data.key
-            // Never tear down a reply the user is in the middle of typing, whichever mode is set:
-            // the popup owns an open text field and unsaved input, so an arriving notification
-            // waits its turn rather than taking the screen.
-            if (busy && (headsUpQueueMode || replyBoxOpen)) {
+            if (busy && replyBoxOpen) {
                 headsUpQueue.addLast(data)
                 while (headsUpQueue.size > HEADS_UP_QUEUE_MAX) headsUpQueue.removeFirst()
                 return@post
@@ -2814,7 +2806,7 @@ object OverlayPanelManager {
                 ellipsize = TextUtils.TruncateAt.END; setPadding(0, (4 * dp).toInt(), 0, 0)
             }
             card.addView(body)
-            if (headsUpExpandable) {
+            run {
                 // Only offered once the text is known to be clipped — measuring after layout is
                 // the only way to tell, since three lines of a narrow card is not a character
                 // count. Expanding also stops the dismiss timer: you asked to read it.
@@ -2986,7 +2978,7 @@ object OverlayPanelManager {
         }
         headsUpView = null; headsUpParams = null; headsUpUsingAccessibility = false
         headsUpShowingKey = null
-        if (advanceQueue && headsUpQueueMode) {
+        if (advanceQueue) {
             val next = headsUpQueue.removeFirstOrNull()
             if (next != null && !isPanelShowing) {
                 stripContext?.let { ctx -> handler.post { showHeadsUpNow(ctx, next) } }
