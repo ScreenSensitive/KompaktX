@@ -179,7 +179,7 @@ fun KompaktXApp() {
     val autoStart by prefs.autoStart.collectAsState(initial = true)
     val hapticsEnabled by prefs.hapticsEnabled.collectAsState(initial = true)
     val headsUpDuration by prefs.headsUpDuration.collectAsState(initial = 5000)
-    val replyOnEnter by prefs.replyOnEnter.collectAsState(initial = false)
+    val replyOnEnter by prefs.replyOnEnter.collectAsState(initial = true)
     var showHeadsUpPage by remember { mutableStateOf(false) }
     BackHandler(enabled = showHeadsUpPage) { showHeadsUpPage = false }
 

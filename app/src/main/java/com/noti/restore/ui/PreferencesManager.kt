@@ -102,7 +102,8 @@ class PreferencesManager(private val context: Context) {
         val v = it[HEADS_UP_DURATION] ?: 5000
         if (v == 2000) 3000 else v
     }
-    val replyOnEnter: Flow<Boolean> = context.dataStore.data.map { it[REPLY_ON_ENTER] ?: false }
+    /** On by default: this device has a physical keyboard, so Enter is the expected send key. */
+    val replyOnEnter: Flow<Boolean> = context.dataStore.data.map { it[REPLY_ON_ENTER] ?: true }
     val showLocationToggle: Flow<Boolean> = context.dataStore.data.map { it[SHOW_LOCATION_TOGGLE] ?: false }
     val triggerMode: Flow<Int> = context.dataStore.data.map { it[TRIGGER_MODE] ?: TriggerMode.SWIPE_LEFT_EDGE }
     val fontSizeOffset: Flow<Int> = context.dataStore.data.map { it[FONT_SIZE_OFFSET] ?: 0 }

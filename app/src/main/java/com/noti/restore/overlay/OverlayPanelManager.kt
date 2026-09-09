@@ -2856,18 +2856,24 @@ object OverlayPanelManager {
                 setHeadsUpFocusable(true)
                 focusReplyInput(context, this)
             }
-            if (replyOnEnter) {
-                // A hardware Enter and the IME's own send/done action both count. Declaring the
-                // action lets a soft keyboard show a send key rather than a newline key.
-                imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEND
-                setOnEditorActionListener { _, actionId, event ->
-                    val enterPressed = event != null &&
-                        event.keyCode == KeyEvent.KEYCODE_ENTER &&
-                        event.action == KeyEvent.ACTION_DOWN
-                    if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEND || enterPressed) {
-                        sendReplyNow?.invoke(); true
-                    } else false
-                }
+            // Declaring the action makes a soft keyboard offer a send key instead of a newline.
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEND
+            // Both listeners are attached unconditionally and consult replyOnEnter when the key
+            // actually arrives, so toggling the setting takes effect on the next press rather than
+            // only on popups built afterwards.
+            setOnEditorActionListener { _, actionId, _ ->
+                if (replyOnEnter && actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEND) {
+                    sendReplyNow?.invoke(); true
+                } else false
+            }
+            // The Kompakt has a physical keyboard, and a hardware Enter arrives as a key event
+            // rather than an IME action — the editor-action listener alone never sees it.
+            setOnKeyListener { _, keyCode, event ->
+                val isEnter = keyCode == KeyEvent.KEYCODE_ENTER ||
+                    keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
+                if (replyOnEnter && isEnter && event.action == KeyEvent.ACTION_DOWN) {
+                    sendReplyNow?.invoke(); true
+                } else false
             }
         }
         replyContainer.addView(replyInput)
