@@ -3139,7 +3139,14 @@ object OverlayPanelManager {
         } catch (_: Exception) { return }
 
         if (frontLightOff) {
-            if (sys > 0 && !force && !pendingWakeRestore) {
+            // The OS restores the last nonzero brightness it remembers, which is exactly
+            // lastManualBrightness. A value equal to that is therefore the system putting back
+            // what it had, not a person choosing it — someone reaching for a slider essentially
+            // never lands on the previous value to the unit. Treating that as a real change is
+            // what let a late wake-restore, arriving after the grace window had already closed,
+            // drop the off state and light the screen at the old level.
+            val looksLikeOsRestore = sys == lastManualBrightness
+            if (sys > 0 && !force && !pendingWakeRestore && !looksLikeOsRestore) {
                 // Ambiguous: a nonzero value while we believe the light is off is either the OS
                 // restoring brightness as the screen comes back (its write reaches this observer
                 // *before* the SCREEN_ON broadcast reaches us, so we cannot yet know) or someone
