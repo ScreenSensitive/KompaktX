@@ -1297,7 +1297,8 @@ private fun CustomTonesSection(context: Context) {
                         }
                         else -> {
                             currentUri = imported
-                            currentToneName = displayName
+                            // The extension is kept on the stored file but not shown in the list.
+                            currentToneName = displayName.substringBeforeLast('.')
                             refreshTones()
                             Toast.makeText(context, "Set: $displayName", Toast.LENGTH_SHORT).show()
                         }
@@ -1539,7 +1540,10 @@ private fun getFileName(context: Context, uri: Uri): String? {
             }
         }
     } catch (_: Exception) {}
-    return name?.substringBeforeLast('.') ?: uri.lastPathSegment?.substringAfterLast('/')?.substringBeforeLast('.')
+    // Keep the extension. MediaStore is given this as DISPLAY_NAME, and while it will often
+    // re-derive one from the MIME type, it is not guaranteed — a tone filed without an extension
+    // can be mishandled by the system ringtone picker.
+    return name ?: uri.lastPathSegment?.substringAfterLast('/')
 }
 
 private fun hasUsageStatsPermission(context: Context): Boolean {

@@ -2713,7 +2713,12 @@ object OverlayPanelManager {
             // Queue mode holds arrivals back; otherwise newest wins, as Android's own heads-up
             // does. Either way a reply being typed is never torn down — that popup owns a focused
             // field and unsaved text, so the newcomer waits until the reply is done.
-            val busy = headsUpShowingKey != null && headsUpShowingKey != data.key
+            // headsUpView is part of the test on purpose: the key alone can be left set by a show
+            // that threw, and then nothing is on screen, no dismiss timer exists to call
+            // removeHeadsUp(), and the queue can never advance — every later notification queues
+            // for ever. Replace mode hid this because it shows regardless of the key.
+            val busy = headsUpShowingKey != null && headsUpView != null &&
+                headsUpShowingKey != data.key
             if (busy && (headsUpQueueMode || replyBoxOpen)) {
                 headsUpQueue.addLast(data)
                 while (headsUpQueue.size > HEADS_UP_QUEUE_MAX) headsUpQueue.removeFirst()
@@ -2776,7 +2781,16 @@ object OverlayPanelManager {
                     windowManager?.addView(view, layoutParams)
                 }
                 startDismissTimer()
-            } catch (e: Exception) { Log.e(TAG, "Failed to show heads-up", e) }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to show heads-up", e)
+                // Leave nothing half-shown: drop the references and let the next queued popup
+                // have a go, rather than blocking on a popup that never appeared.
+                headsUpView = null; headsUpParams = null; headsUpUsingAccessibility = false
+                headsUpShowingKey = null
+                headsUpQueue.removeFirstOrNull()?.let { next ->
+                    handler.post { showHeadsUpNow(context, next) }
+                }
+            }
         }
     }
 
@@ -3058,10 +3072,14 @@ object OverlayPanelManager {
         headsUpView = null; headsUpParams = null; headsUpUsingAccessibility = false
         headsUpShowingKey = null
         if (advanceQueue) {
-            val next = headsUpQueue.removeFirstOrNull()
-            if (next != null && !isPanelShowing) {
-                stripContext?.let { ctx -> handler.post { showHeadsUpNow(ctx, next) } }
+            val next = headsUpQueue.firstOrNull()
+            val ctx = stripContext
+            if (next != null && ctx != null && !isPanelShowing) {
+                headsUpQueue.removeFirst()
+                handler.post { showHeadsUpNow(ctx, next) }
             }
+            // Otherwise it stays queued. Removing it first and then finding the tray open, or no
+            // context, silently threw the popup away.
         }
     }
 
