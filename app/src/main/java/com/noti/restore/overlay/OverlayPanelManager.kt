@@ -75,7 +75,13 @@ object OverlayPanelManager {
     private var appActionsDialog: View? = null
     private var headsUpView: View? = null
     private var headsUpParams: WindowManager.LayoutParams? = null
-    /** Holds a notification that arrived while a reply was being typed. */
+    /**
+     * Notifications that arrived while a reply was being typed.
+     *
+     * This is the only thing held back — popups otherwise replace each other as Android's do. The
+     * queue drains from removeHeadsUp(), so the held notifications appear once the reply is sent
+     * or the popup is dismissed.
+     */
     private val headsUpQueue = ArrayDeque<NotificationPopupData>()
     private var headsUpShowingKey: String? = null
     /** Body of the popup on screen, so a re-post can be told from a new message under one key. */
@@ -88,8 +94,6 @@ object OverlayPanelManager {
     )
     private var dismissRunnable: Runnable? = null
     private var replyBoxOpen = false
-    /** Send action for the popup currently on screen, shared by the button and the Enter key. */
-    private var sendReplyNow: (() -> Unit)? = null
 
     // Swipe detection
     private var swipeStartX = 0f
@@ -110,15 +114,6 @@ object OverlayPanelManager {
     var hapticsEnabled = true
     /** How long a heads-up popup stays on screen, in milliseconds. */
     var headsUpDurationMs = 5000L
-    /**
-     * Hold popups back and show them one at a time, instead of the newest taking the screen.
-     *
-     * Off by default because replacing is what Android does. Note this cannot separate messages
-     * from one conversation: a messaging app re-posts the same notification key per thread, and
-     * same-key arrivals replace their earlier entry by design rather than stacking.
-     */
-    var headsUpQueueMode = false
-
     /** Send a popup reply on Enter, instead of only via the send button. */
     var replyOnEnter = false
     var showLocationToggle = false
@@ -2741,12 +2736,7 @@ object OverlayPanelManager {
                 return@post
             }
 
-            val busy = headsUpShowingKey != null && headsUpView != null && !isRepostOfShowing
-            if (busy && headsUpQueueMode) {
-                headsUpQueue.addLast(data)
-                while (headsUpQueue.size > HEADS_UP_QUEUE_MAX) headsUpQueue.removeFirst()
-                return@post
-            }
+            // Otherwise newest wins, as Android's own heads-up does.
             showHeadsUpNow(context, data)
         }
     }
@@ -2894,6 +2884,9 @@ object OverlayPanelManager {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             setPadding(0, padSmall, 0, 0); visibility = View.GONE
         }
+        // Declared before the field so the listeners inside can capture it; assigned below, once
+        // replyInput exists for it to read from.
+        var doSend: (() -> Unit)? = null
         val replyInput = EditText(context).apply {
             hint = "Reply..."; setHintTextColor(BLACK); setTextColor(BLACK); textSize = baseTextSize; setSingleLine(true)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
@@ -2905,26 +2898,31 @@ object OverlayPanelManager {
             }
             // Declaring the action makes a soft keyboard offer a send key instead of a newline.
             imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEND
-            // Both listeners are attached unconditionally and consult replyOnEnter when the key
-            // actually arrives, so toggling the setting takes effect on the next press rather than
-            // only on popups built afterwards.
+            // Both listeners consult replyOnEnter when the key arrives, so toggling the setting
+            // takes effect on the next press rather than only on popups built afterwards. They
+            // call the local `doSend` rather than a field on the manager: that field was shared
+            // across popups and reassigned by every rebuild, so it was the obvious thing to
+            // distrust when Enter stopped working.
             setOnEditorActionListener { _, actionId, _ ->
                 if (replyOnEnter && actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEND) {
-                    sendReplyNow?.invoke(); true
+                    doSend?.invoke(); true
                 } else false
             }
             // The Kompakt has a physical keyboard, and a hardware Enter arrives as a key event
-            // rather than an IME action — the editor-action listener alone never sees it.
+            // rather than an IME action — the editor-action listener alone never sees it. Both
+            // DOWN and UP are consumed so the key cannot also insert a newline on the way up.
             setOnKeyListener { _, keyCode, event ->
                 val isEnter = keyCode == KeyEvent.KEYCODE_ENTER ||
                     keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
-                if (replyOnEnter && isEnter && event.action == KeyEvent.ACTION_DOWN) {
-                    sendReplyNow?.invoke(); true
-                } else false
+                when {
+                    !replyOnEnter || !isEnter -> false
+                    event.action == KeyEvent.ACTION_DOWN -> { doSend?.invoke(); true }
+                    else -> true
+                }
             }
         }
         replyContainer.addView(replyInput)
-        sendReplyNow = {
+        doSend = {
             val rt = replyInput.text.toString()
             if (rt.isNotBlank()) {
                 data.replyAction?.let { a ->
@@ -2945,7 +2943,7 @@ object OverlayPanelManager {
         replyContainer.addView(TextView(context).apply {
             text = "\u27A4"; setTextColor(WHITE); textSize = baseTitleSize + 2f; gravity = Gravity.CENTER; background = sendBtnBg
             layoutParams = LinearLayout.LayoutParams((36 * dp).toInt(), (36 * dp).toInt()).apply { marginStart = padSmall }
-            setOnClickListener { sendReplyNow?.invoke() }
+            setOnClickListener { doSend?.invoke() }
         })
         card.addView(replyContainer)
         // Actions
