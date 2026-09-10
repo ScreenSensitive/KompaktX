@@ -654,10 +654,12 @@ object OverlayPanelManager {
             })
         } else {
             topBar.addView(ImageView(context).apply {
-                val dotPx = (2.6f * dp)
+                // Sized so the grid stands roughly as tall as the large date numeral the Text
+                // style leads with, rather than sitting visibly smaller beside the date column.
+                val dotPx = (3.8f * dp)
                 liveClockDots = this
                 liveClockDotPx = dotPx
-                setImageBitmap(drawDottedText(timeStr, dotPx, dotPx * 0.55f))
+                setImageBitmap(drawDottedText(dottedTimeText(timeStr), dotPx, dotPx * 0.55f))
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
                 ).apply { marginEnd = (10 * dp).toInt() }
@@ -1506,11 +1508,17 @@ object OverlayPanelManager {
         '8' to listOf("111", "101", "111", "101", "111"),
         '9' to listOf("111", "101", "111", "001", "001"),
         ':' to listOf("0", "1", "0", "1", "0"),
-        ' ' to listOf("0", "0", "0", "0", "0"),
-        'A' to listOf("111", "101", "111", "101", "101"),
-        'P' to listOf("111", "101", "111", "100", "100"),
-        'M' to listOf("101", "111", "111", "101", "101")
+        ' ' to listOf("0", "0", "0", "0", "0")
     )
+
+    /**
+     * Digits and the colon only — the AM/PM suffix is dropped.
+     *
+     * Spelling out AM or PM in dots nearly doubles the width for two letters that the dot grid
+     * renders poorly anyway, and the date line directly beneath already carries the context.
+     */
+    private fun dottedTimeText(raw: String): String =
+        raw.filter { it.isDigit() || it == ':' }.trim()
 
     /** Render a time string as a grid of dots. Unknown characters are skipped. */
     private fun drawDottedText(text: String, dot: Float, gap: Float): Bitmap {
@@ -2650,7 +2658,9 @@ object OverlayPanelManager {
                     if (battery != null) { append("  |  "); append("$battery%") }
                 }
                 liveClockDots?.let { view ->
-                    view.setImageBitmap(drawDottedText(time, liveClockDotPx, liveClockDotPx * 0.55f))
+                    view.setImageBitmap(
+                        drawDottedText(dottedTimeText(time), liveClockDotPx, liveClockDotPx * 0.55f)
+                    )
                 }
                 handler.postDelayed(this, CLOCK_REFRESH_MS)
             }
