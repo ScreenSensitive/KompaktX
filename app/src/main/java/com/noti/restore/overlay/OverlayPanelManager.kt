@@ -122,6 +122,7 @@ object OverlayPanelManager {
     var recentsLayoutMode: Int = RecentsLayoutMode.TABBED
     var hideAppIcons: Boolean = false
     var tabPosition: Int = com.noti.restore.ui.TabPosition.BOTTOM
+    var clockStyle: Int = com.noti.restore.ui.ClockStyle.TEXT
 
     // Dark mode for the overlay UI — set from MainActivity based on theme pref + system uiMode.
     // Swaps every WHITE/BLACK reference within the overlay so the panel inverts cleanly.
@@ -637,48 +638,57 @@ object OverlayPanelManager {
             if (lvl >= 0 && scale > 0) lvl * 100 / scale else null
         }
 
-        // Large date number
-        topBar.addView(TextView(context).apply {
-            text = dateStr; setTextColor(BLACK); textSize = baseTitleSize + 14f
-            typeface = Typeface.DEFAULT_BOLD
-            setPadding(0, 0, (8 * dp).toInt(), 0)
-        })
-        // Month/day/time column
+        // Three header styles. Text is the original; Large leads with the time instead of the
+        // date; Dots renders the time as a dot grid, which stays legible on e-ink at a size where a
+        // scaled typeface would smear.
+        val dotsStyle = clockStyle == com.noti.restore.ui.ClockStyle.DOTS
+        val largeStyle = clockStyle == com.noti.restore.ui.ClockStyle.LARGE
+
+        if (!dotsStyle) {
+            topBar.addView(TextView(context).apply {
+                text = if (largeStyle) timeStr else dateStr
+                setTextColor(BLACK)
+                textSize = if (largeStyle) baseTitleSize + 10f else baseTitleSize + 14f
+                typeface = Typeface.DEFAULT_BOLD
+                setPadding(0, 0, (8 * dp).toInt(), 0)
+            })
+        } else {
+            topBar.addView(ImageView(context).apply {
+                val dotPx = (2.6f * dp)
+                liveClockDots = this
+                liveClockDotPx = dotPx
+                setImageBitmap(drawDottedText(timeStr, dotPx, dotPx * 0.55f))
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { marginEnd = (10 * dp).toInt() }
+            })
+        }
+
         val dateCol = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
         dateCol.addView(TextView(context).apply {
-            text = monthYear; setTextColor(BLACK); textSize = baseSmallSize
+            // Whichever element the style promoted, the other one is named here instead of
+            // repeating it.
+            text = if (largeStyle) "$dayOfWeek $dateStr" else monthYear
+            setTextColor(BLACK); textSize = baseSmallSize
             typeface = Typeface.DEFAULT_BOLD
         })
-        // One status line: day, time and battery are all read-only facts, so they belong
-        // together. Battery used to sit stacked above the close button, which put a readout and
-        // a control in the same column and left the ✕ hanging low and off-centre.
         val clockLine = TextView(context).apply {
             text = buildString {
-                append(dayOfWeek); append("  |  "); append(timeStr)
+                if (dotsStyle) {
+                    append(dayOfWeek); append("  |  "); append(monthYear)
+                } else if (largeStyle) {
+                    append(monthYear)
+                } else {
+                    append(dayOfWeek); append("  |  "); append(timeStr)
+                }
                 if (batteryLevel != null) { append("  |  "); append("$batteryLevel%") }
             }
             setTextColor(BLACK); textSize = baseTinySize
         }
         dateCol.addView(clockLine)
-        // Long-press the date block — date, clock and battery are one target — to open KompaktX's
-        // settings. A plain tap is deliberately left doing nothing, so the gesture cannot be hit by
-        // a stray press now that the panel's dead space is inert.
-        dateCol.isLongClickable = true
-        dateCol.setOnLongClickListener {
-            tapFeedback(context)
-            try {
-                context.startActivity(
-                    Intent(context, com.noti.restore.ui.MainActivity::class.java).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                )
-            } catch (_: Exception) {}
-            dismissPanel()
-            true
-        }
         topBar.addView(dateCol)
         // The header is built once, so without this the clock freezes at whatever it read when the
         // panel opened. Re-read on the minute rather than every second: one partial refresh a
@@ -695,6 +705,23 @@ object OverlayPanelManager {
             ).apply { gravity = Gravity.CENTER_VERTICAL; marginStart = (8 * dp).toInt() }
             setOnClickListener { dismissPanel() }
         })
+        // Long-press anywhere on the header — numeral, month, clock or battery — to open
+        // KompaktX's settings. Attached to the row rather than the date column so the large date
+        // numeral counts too; its children are not long-clickable, so the gesture bubbles up. A
+        // plain tap stays unbound, so this cannot be hit by a stray press.
+        topBar.isLongClickable = true
+        topBar.setOnLongClickListener {
+            tapFeedback(context)
+            try {
+                context.startActivity(
+                    Intent(context, com.noti.restore.ui.MainActivity::class.java).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                )
+            } catch (_: Exception) {}
+            dismissPanel()
+            true
+        }
         panelCard.addView(topBar)
 
         // ── Tab switcher: small pill toggle (placed top or bottom per [tabPosition]) ──
@@ -1459,6 +1486,59 @@ object OverlayPanelManager {
             )
             manager.isLocationEnabled == enable
         } catch (_: Exception) { false }
+    }
+
+    /**
+     * 3x5 dot patterns for the digits and a colon, one string per glyph, rows top to bottom.
+     *
+     * Hand-built rather than using a font: at this size a scaled typeface turns to mush on e-ink,
+     * whereas discrete dots stay crisp because each one either exists or does not.
+     */
+    private val DOT_GLYPHS = mapOf(
+        '0' to listOf("111", "101", "101", "101", "111"),
+        '1' to listOf("010", "110", "010", "010", "111"),
+        '2' to listOf("111", "001", "111", "100", "111"),
+        '3' to listOf("111", "001", "111", "001", "111"),
+        '4' to listOf("101", "101", "111", "001", "001"),
+        '5' to listOf("111", "100", "111", "001", "111"),
+        '6' to listOf("111", "100", "111", "101", "111"),
+        '7' to listOf("111", "001", "001", "001", "001"),
+        '8' to listOf("111", "101", "111", "101", "111"),
+        '9' to listOf("111", "101", "111", "001", "001"),
+        ':' to listOf("0", "1", "0", "1", "0"),
+        ' ' to listOf("0", "0", "0", "0", "0"),
+        'A' to listOf("111", "101", "111", "101", "101"),
+        'P' to listOf("111", "101", "111", "100", "100"),
+        'M' to listOf("101", "111", "111", "101", "101")
+    )
+
+    /** Render a time string as a grid of dots. Unknown characters are skipped. */
+    private fun drawDottedText(text: String, dot: Float, gap: Float): Bitmap {
+        val glyphs = text.uppercase().mapNotNull { ch -> DOT_GLYPHS[ch]?.let { ch to it } }
+        if (glyphs.isEmpty()) return Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+        val pitch = dot + gap
+        val widthCols = glyphs.sumOf { it.second[0].length } + (glyphs.size - 1)  // 1 col between
+        val w = (widthCols * pitch - gap).toInt().coerceAtLeast(1)
+        val h = (5 * pitch - gap).toInt().coerceAtLeast(1)
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = BLACK; style = Paint.Style.FILL }
+        var colOffset = 0
+        for ((_, rows) in glyphs) {
+            rows.forEachIndexed { rowIndex, row ->
+                row.forEachIndexed { colIndex, bit ->
+                    if (bit == '1') {
+                        canvas.drawCircle(
+                            (colOffset + colIndex) * pitch + dot / 2f,
+                            rowIndex * pitch + dot / 2f,
+                            dot / 2f, paint
+                        )
+                    }
+                }
+            }
+            colOffset += rows[0].length + 1
+        }
+        return bmp
     }
 
     /** Map-pin glyph; struck through when location is off, matching the other toggle icons. */
@@ -2537,6 +2617,8 @@ object OverlayPanelManager {
      * window is not focusable — and the panel window deliberately is not.
      */
     private var clockUpdateRunnable: Runnable? = null
+    private var liveClockDots: ImageView? = null
+    private var liveClockDotPx = 0f
 
     /** Keep the header's day/time/battery line current while the panel stays open. */
     private fun startClockUpdates(context: Context, line: TextView) {
@@ -2552,11 +2634,23 @@ object OverlayPanelManager {
                         if (lvl >= 0 && scale > 0) lvl * 100 / scale else null
                     }
                 } catch (_: Exception) { null }
+                val time = android.text.format.DateFormat.getTimeFormat(context).format(cal.time)
+                val day = android.text.format.DateFormat.format("EEEE", cal).toString()
+                val monthYear = android.text.format.DateFormat.format("MMMM yyyy", cal).toString()
+                // Rebuild whatever the active style actually put on this line, or the minute tick
+                // would quietly rewrite a Dots or Large header into the Text one.
                 line.text = buildString {
-                    append(android.text.format.DateFormat.format("EEEE", cal))
-                    append("  |  ")
-                    append(android.text.format.DateFormat.getTimeFormat(context).format(cal.time))
+                    when (clockStyle) {
+                        com.noti.restore.ui.ClockStyle.DOTS -> {
+                            append(day); append("  |  "); append(monthYear)
+                        }
+                        com.noti.restore.ui.ClockStyle.LARGE -> append(monthYear)
+                        else -> { append(day); append("  |  "); append(time) }
+                    }
                     if (battery != null) { append("  |  "); append("$battery%") }
+                }
+                liveClockDots?.let { view ->
+                    view.setImageBitmap(drawDottedText(time, liveClockDotPx, liveClockDotPx * 0.55f))
                 }
                 handler.postDelayed(this, CLOCK_REFRESH_MS)
             }
@@ -2568,6 +2662,7 @@ object OverlayPanelManager {
     private fun stopClockUpdates() {
         clockUpdateRunnable?.let { handler.removeCallbacks(it) }
         clockUpdateRunnable = null
+        liveClockDots = null
     }
 
     private fun tapFeedback(context: Context) {

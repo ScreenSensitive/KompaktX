@@ -97,6 +97,7 @@ class OverlayService : Service() {
         watch(prefs.recentAppsEnabled) { OverlayPanelManager.recentAppsEnabled = it }
         watch(prefs.recentsLayoutMode) { OverlayPanelManager.recentsLayoutMode = it }
         watch(prefs.tabPosition) { OverlayPanelManager.tabPosition = it }
+        watch(prefs.clockStyle) { OverlayPanelManager.clockStyle = it }
         watch(prefs.hideAppIcons) { OverlayPanelManager.hideAppIcons = it }
         watch(prefs.fontSizeOffset) { OverlayPanelManager.fontSizeOffset = it }
         watch(prefs.einkControlsEnabled) { OverlayPanelManager.einkControlsEnabled = it }

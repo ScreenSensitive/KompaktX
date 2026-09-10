@@ -140,6 +140,7 @@ fun KompaktXApp() {
     val prefsLoaded = storedThemeMode != null
     val themeMode = storedThemeMode ?: ThemeMode.SYSTEM
     val tabPosition by prefs.tabPosition.collectAsState(initial = TabPosition.BOTTOM)
+    val clockStyle by prefs.clockStyle.collectAsState(initial = ClockStyle.TEXT)
 
     // Resolve effective dark state from the theme pref + system uiMode.
     val systemDark = (context.resources.configuration.uiMode and
@@ -579,6 +580,41 @@ fun KompaktXApp() {
         Spacer(Modifier.height(20.dp))
 
         // Theme
+        SectionHeader("Clock Style")
+        SettingsCard {
+            Row(Modifier.fillMaxWidth().padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(ClockStyle.TEXT, ClockStyle.LARGE, ClockStyle.DOTS).forEach { style ->
+                    val selected = clockStyle == style
+                    Box(
+                        modifier = Modifier.weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .border(2.dp, FG, RoundedCornerShape(8.dp))
+                            .then(
+                                if (selected) Modifier.background(FG, RoundedCornerShape(8.dp))
+                                else Modifier
+                            )
+                            .clickable { scope.launch { prefs.setClockStyle(style) } }
+                            .heightIn(min = 44.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(ClockStyle.label(style), fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold, color = if (selected) BG else FG)
+                    }
+                }
+            }
+        }
+        Text(
+            when (clockStyle) {
+                ClockStyle.LARGE -> "The time leads the panel header, with the date beneath."
+                ClockStyle.DOTS -> "The time is drawn as a grid of dots, which stays crisp on e-ink."
+                else -> "The date leads the panel header, with the time beside it."
+            },
+            fontSize = 12.sp, color = FG, modifier = Modifier.padding(top = 8.dp)
+        )
+
+        Spacer(Modifier.height(20.dp))
+
         SectionHeader("Theme")
         SettingsCard {
             Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceEvenly) {

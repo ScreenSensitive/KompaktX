@@ -51,6 +51,19 @@ object ThemeMode {
     const val DARK = 2
 }
 
+/** How the panel header renders the time */
+object ClockStyle {
+    const val TEXT = 0
+    const val LARGE = 1
+    const val DOTS = 2
+
+    fun label(style: Int): String = when (style) {
+        LARGE -> "Large"
+        DOTS -> "Dots"
+        else -> "Text"
+    }
+}
+
 object TabPosition {
     const val TOP = 0
     const val BOTTOM = 1
@@ -82,6 +95,7 @@ class PreferencesManager(private val context: Context) {
         private val HIDE_APP_ICONS = booleanPreferencesKey("hide_app_icons")
         private val THEME_MODE = intPreferencesKey("theme_mode")
         private val TAB_POSITION = intPreferencesKey("tab_position")
+        private val CLOCK_STYLE = intPreferencesKey("clock_style")
 
         @Volatile
         private var instance: PreferencesManager? = null
@@ -124,6 +138,7 @@ class PreferencesManager(private val context: Context) {
     val hideAppIcons: Flow<Boolean> = context.dataStore.data.map { it[HIDE_APP_ICONS] ?: false }
     val themeMode: Flow<Int> = context.dataStore.data.map { it[THEME_MODE] ?: ThemeMode.SYSTEM }
     val tabPosition: Flow<Int> = context.dataStore.data.map { it[TAB_POSITION] ?: TabPosition.BOTTOM }
+    val clockStyle: Flow<Int> = context.dataStore.data.map { it[CLOCK_STYLE] ?: ClockStyle.TEXT }
 
     suspend fun setHeadsUpEnabled(enabled: Boolean) { context.dataStore.edit { it[HEADS_UP_ENABLED] = enabled } }
     suspend fun setRecentAppsEnabled(enabled: Boolean) { context.dataStore.edit { it[RECENT_APPS_ENABLED] = enabled } }
@@ -141,6 +156,7 @@ class PreferencesManager(private val context: Context) {
     suspend fun setHideAppIcons(enabled: Boolean) { context.dataStore.edit { it[HIDE_APP_ICONS] = enabled } }
     suspend fun setThemeMode(mode: Int) { context.dataStore.edit { it[THEME_MODE] = mode } }
     suspend fun setTabPosition(pos: Int) { context.dataStore.edit { it[TAB_POSITION] = pos } }
+    suspend fun setClockStyle(style: Int) { context.dataStore.edit { it[CLOCK_STYLE] = style } }
 
     /**
      * Assign a trigger to an action. Automatically unassigns that trigger from any other action.
