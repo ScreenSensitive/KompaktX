@@ -111,6 +111,7 @@ class OverlayService : Service() {
             KompaktXListener.setHiddenNotiApps(it)
         }
         watch(prefs.volumeLongPressMedia) { RecentsButtonService.volumeLongPressMediaEnabled = it }
+        watch(prefs.popupReplyTrigger) { RecentsButtonService.popupReplyTrigger = it }
 
         // The three shortcut assignments have to be applied together: updateShortcuts() clears
         // every trigger before reassigning, so pushing them one at a time would leave the others

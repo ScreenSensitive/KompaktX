@@ -122,6 +122,20 @@ class RecentsButtonService : AccessibilityService() {
         // Volume long press for media skip (only when media is playing)
         @Volatile var volumeLongPressMediaEnabled = false
 
+        /**
+         * Gesture that opens a popup's reply box while a repliable popup is on screen.
+         *
+         * Takes precedence over whatever the same gesture normally does, but only for as long as
+         * the popup is up — so it can share a gesture with a shortcut instead of consuming one.
+         */
+        @Volatile var popupReplyTrigger = ShortcutTrigger.NONE
+
+        /** Whether [trigger] should open a reply right now rather than do its usual job. */
+        fun popupReplyWantsTrigger(trigger: Int): Boolean =
+            popupReplyTrigger != ShortcutTrigger.NONE &&
+                popupReplyTrigger == trigger &&
+                OverlayPanelManager.canReplyToHeadsUp
+
         /** Update all shortcut assignments at once from ShortcutTrigger values. */
         fun updateShortcuts(
             frontLightTrigger: Int,
@@ -218,14 +232,17 @@ class RecentsButtonService : AccessibilityService() {
                 // does — see handleRecentsAdvanced, which passes those events straight through
                 // rather than substituting an action the user never chose.
                 if (OverlayPanelManager.triggerMode == TriggerMode.RECENTS_BUTTON ||
-                    longPressRecentsAction.isNotEmpty() || doubleTapRecentsAction.isNotEmpty()) {
+                    longPressRecentsAction.isNotEmpty() || doubleTapRecentsAction.isNotEmpty() ||
+                    popupReplyWantsTrigger(ShortcutTrigger.LONG_PRESS_RECENTS) ||
+                    popupReplyWantsTrigger(ShortcutTrigger.DOUBLE_TAP_RECENTS)) {
                     return handleRecentsAdvanced(event)
                 }
             }
 
             KeyEvent.KEYCODE_BACK -> {
                 // Long press back shortcut
-                if (longPressBackAction.isNotEmpty()) {
+                if (longPressBackAction.isNotEmpty() ||
+                    popupReplyWantsTrigger(ShortcutTrigger.LONG_PRESS_BACK)) {
                     return handleBackAdvanced(event)
                 }
                 // Default: peel back one overlay layer — the long-press menu if it is up,
@@ -277,10 +294,15 @@ class RecentsButtonService : AccessibilityService() {
                 recentsLongPressed = false
                 recentsLongPressRunnable?.let { handler.removeCallbacks(it) }
 
-                if (longPressRecentsAction.isNotEmpty()) {
+                if (longPressRecentsAction.isNotEmpty() ||
+                    popupReplyWantsTrigger(ShortcutTrigger.LONG_PRESS_RECENTS)) {
                     recentsLongPressRunnable = Runnable {
                         recentsLongPressed = true
-                        executeAction(longPressRecentsAction)
+                        if (popupReplyWantsTrigger(ShortcutTrigger.LONG_PRESS_RECENTS)) {
+                            OverlayPanelManager.openHeadsUpReply()
+                        } else if (longPressRecentsAction.isNotEmpty()) {
+                            executeAction(longPressRecentsAction)
+                        }
                     }
                     handler.postDelayed(recentsLongPressRunnable!!, LONG_PRESS_DELAY)
                 }
@@ -298,17 +320,23 @@ class RecentsButtonService : AccessibilityService() {
                 val now = System.currentTimeMillis()
 
                 // Check for double tap
-                if (doubleTapRecentsAction.isNotEmpty() && (now - lastRecentsUpTime) < DOUBLE_TAP_TIMEOUT) {
+                val doubleTapWanted = doubleTapRecentsAction.isNotEmpty() ||
+                    popupReplyWantsTrigger(ShortcutTrigger.DOUBLE_TAP_RECENTS)
+                if (doubleTapWanted && (now - lastRecentsUpTime) < DOUBLE_TAP_TIMEOUT) {
                     recentsSingleTapRunnable?.let { handler.removeCallbacks(it) }
                     recentsSingleTapRunnable = null
                     lastRecentsUpTime = 0L
-                    executeAction(doubleTapRecentsAction)
+                    if (popupReplyWantsTrigger(ShortcutTrigger.DOUBLE_TAP_RECENTS)) {
+                        OverlayPanelManager.openHeadsUpReply()
+                    } else {
+                        executeAction(doubleTapRecentsAction)
+                    }
                     return true
                 }
 
                 lastRecentsUpTime = now
 
-                if (doubleTapRecentsAction.isNotEmpty()) {
+                if (doubleTapWanted) {
                     // Delay single tap to wait for possible second tap
                     recentsSingleTapRunnable?.let { handler.removeCallbacks(it) }
                     recentsSingleTapRunnable = Runnable {
@@ -337,7 +365,11 @@ class RecentsButtonService : AccessibilityService() {
                 backLongPressRunnable?.let { handler.removeCallbacks(it) }
                 backLongPressRunnable = Runnable {
                     backLongPressed = true
-                    executeAction(longPressBackAction)
+                    if (popupReplyWantsTrigger(ShortcutTrigger.LONG_PRESS_BACK)) {
+                        OverlayPanelManager.openHeadsUpReply()
+                    } else if (longPressBackAction.isNotEmpty()) {
+                        executeAction(longPressBackAction)
+                    }
                 }
                 handler.postDelayed(backLongPressRunnable!!, LONG_PRESS_DELAY)
                 return true

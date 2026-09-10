@@ -94,6 +94,8 @@ object OverlayPanelManager {
     )
     private var dismissRunnable: Runnable? = null
     private var replyBoxOpen = false
+    /** Opens the showing popup's reply box, when it has one. Null between popups. */
+    private var openReplyNow: (() -> Unit)? = null
 
     // Swipe detection
     private var swipeStartX = 0f
@@ -333,6 +335,20 @@ object OverlayPanelManager {
     }
 
     val isPanelShowing: Boolean get() = panelView != null
+
+    /** True while a heads-up popup is on screen and offers a reply. */
+    val canReplyToHeadsUp: Boolean get() = headsUpView != null && openReplyNow != null
+
+    /**
+     * Open the showing popup's reply box. Returns false when there is nothing to reply to, so a
+     * caller can fall back to whatever the key would normally have done.
+     */
+    fun openHeadsUpReply(): Boolean {
+        val open = openReplyNow ?: return false
+        if (headsUpView == null) return false
+        handler.post { open() }
+        return true
+    }
 
     fun togglePanelFromService(context: Context) {
         if (windowManager == null) {
@@ -3130,10 +3146,7 @@ object OverlayPanelManager {
                     ).apply { marginStart = (4 * dp).toInt() }
                     setOnClickListener {
                         if (na.isReply) {
-                            replyBoxOpen = true; cancelDismissTimer(); replyContainer.visibility = View.VISIBLE
-                            actionsRow.visibility = View.GONE
-                            setHeadsUpFocusable(true)
-                            focusReplyInput(context, replyInput)
+                            openReplyNow?.invoke()
                         } else {
                             try { KompaktXListener.executeAction(na) } catch (_: Exception) {}
                             removeHeadsUp()
@@ -3142,6 +3155,18 @@ object OverlayPanelManager {
                 })
             }
             card.addView(actionsRow)
+            // Exposed so a hardware gesture can open the reply without reaching the popup's
+            // button. Cleared in removeHeadsUp, so it can only ever act on what is on screen.
+            if (data.replyAction != null) {
+                openReplyNow = {
+                    replyBoxOpen = true
+                    cancelDismissTimer()
+                    replyContainer.visibility = View.VISIBLE
+                    actionsRow.visibility = View.GONE
+                    setHeadsUpFocusable(true)
+                    focusReplyInput(context, replyInput)
+                }
+            }
         }
         wrapper.addView(card)
         return wrapper
@@ -3261,6 +3286,7 @@ object OverlayPanelManager {
         }
         headsUpView = null; headsUpParams = null; headsUpUsingAccessibility = false
         headsUpShowingKey = null; headsUpShowingText = null
+        openReplyNow = null
         if (advanceQueue) {
             val next = headsUpQueue.firstOrNull()
             val ctx = stripContext

@@ -177,6 +177,7 @@ fun KompaktXApp() {
     val shortcutEinkRefresh by prefs.shortcutEinkRefresh.collectAsState(initial = ShortcutTrigger.NONE)
     val shortcutRefreshCycle by prefs.shortcutRefreshCycle.collectAsState(initial = ShortcutTrigger.NONE)
     val volumeLongPressMedia by prefs.volumeLongPressMedia.collectAsState(initial = false)
+    val popupReplyTrigger by prefs.popupReplyTrigger.collectAsState(initial = ShortcutTrigger.NONE)
     val autoStart by prefs.autoStart.collectAsState(initial = true)
     val hapticsEnabled by prefs.hapticsEnabled.collectAsState(initial = true)
     val headsUpDuration by prefs.headsUpDuration.collectAsState(initial = 5000)
@@ -528,6 +529,16 @@ fun KompaktXApp() {
                 icon = Icons.Default.Refresh,
                 currentTrigger = shortcutEinkRefresh,
                 onTriggerChange = { scope.launch { prefs.setShortcutTrigger("eink_refresh", it) } }
+            )
+            Divider(color = FG, thickness = 1.dp)
+            ShortcutRow(
+                action = "popup_reply",
+                label = "Reply to Popup",
+                description = "While a notification popup is up, this opens its reply box instead " +
+                    "of its usual action — so you needn't reach the top of the screen",
+                icon = Icons.Default.Reply,
+                currentTrigger = popupReplyTrigger,
+                onTriggerChange = { scope.launch { prefs.setPopupReplyTrigger(it) } }
             )
             Divider(color = FG, thickness = 1.dp)
             ToggleRow("Volume Long Press → Media Skip",

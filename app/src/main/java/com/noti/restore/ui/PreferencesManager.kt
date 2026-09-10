@@ -89,6 +89,7 @@ class PreferencesManager(private val context: Context) {
         private val SHORTCUT_FRONT_LIGHT = intPreferencesKey("shortcut_front_light")
         private val SHORTCUT_EINK_REFRESH = intPreferencesKey("shortcut_eink_refresh")
         private val SHORTCUT_REFRESH_CYCLE = intPreferencesKey("shortcut_refresh_cycle")
+        private val POPUP_REPLY_TRIGGER = intPreferencesKey("popup_reply_trigger")
         // Refresh cycle: which 2 modes to alternate between (EinkMode values)
         private val VOLUME_LONG_PRESS_MEDIA = booleanPreferencesKey("volume_long_press_media")
         private val RECENTS_LAYOUT_MODE = intPreferencesKey("recents_layout_mode")
@@ -133,6 +134,14 @@ class PreferencesManager(private val context: Context) {
     val shortcutFrontLight: Flow<Int> = context.dataStore.data.map { it[SHORTCUT_FRONT_LIGHT] ?: ShortcutTrigger.NONE }
     val shortcutEinkRefresh: Flow<Int> = context.dataStore.data.map { it[SHORTCUT_EINK_REFRESH] ?: ShortcutTrigger.NONE }
     val shortcutRefreshCycle: Flow<Int> = context.dataStore.data.map { it[SHORTCUT_REFRESH_CYCLE] ?: ShortcutTrigger.NONE }
+
+    /**
+     * Gesture that opens a popup's reply box while one is on screen.
+     *
+     * Separate from the shortcut assignments rather than competing with them: it only applies while
+     * a repliable popup is showing, so the same gesture can keep its usual job the rest of the time.
+     */
+    val popupReplyTrigger: Flow<Int> = context.dataStore.data.map { it[POPUP_REPLY_TRIGGER] ?: ShortcutTrigger.NONE }
     val volumeLongPressMedia: Flow<Boolean> = context.dataStore.data.map { it[VOLUME_LONG_PRESS_MEDIA] ?: false }
     val recentsLayoutMode: Flow<Int> = context.dataStore.data.map { it[RECENTS_LAYOUT_MODE] ?: RecentsLayoutMode.TABBED }
     val hideAppIcons: Flow<Boolean> = context.dataStore.data.map { it[HIDE_APP_ICONS] ?: false }
@@ -162,6 +171,8 @@ class PreferencesManager(private val context: Context) {
      * Assign a trigger to an action. Automatically unassigns that trigger from any other action.
      * Pass ShortcutTrigger.NONE to clear the assignment.
      */
+    suspend fun setPopupReplyTrigger(trigger: Int) { context.dataStore.edit { it[POPUP_REPLY_TRIGGER] = trigger } }
+
     suspend fun setShortcutTrigger(action: String, trigger: Int) {
         context.dataStore.edit { prefs ->
             // If assigning a real trigger, unassign it from other actions first
