@@ -823,10 +823,9 @@ private fun HeadsUpScreen(
                     }
                     Text(
                         if (queueMode)
-                            "Each popup is shown in turn for the full time. Up to five wait; beyond " +
-                                "that the oldest is dropped. Messages from one conversation still " +
-                                "collapse into a single popup — apps re-post one notification per " +
-                                "thread rather than one per message."
+                            "Each popup is shown in turn for the full time, including several " +
+                                "messages from the same conversation. Up to five wait; beyond that " +
+                                "the oldest is dropped."
                         else
                             "The newest popup takes the screen straight away, as Android does. " +
                                 "Earlier ones are not shown again; they stay in the tray.",

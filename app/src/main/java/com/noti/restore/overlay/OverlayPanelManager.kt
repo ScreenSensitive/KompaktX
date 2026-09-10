@@ -78,6 +78,8 @@ object OverlayPanelManager {
     /** Holds a notification that arrived while a reply was being typed. */
     private val headsUpQueue = ArrayDeque<NotificationPopupData>()
     private var headsUpShowingKey: String? = null
+    /** Body of the popup on screen, so a re-post can be told from a new message under one key. */
+    private var headsUpShowingText: String? = null
     private val handler = Handler(Looper.getMainLooper())
 
     /** For preference writes made from the panel itself, e.g. the app long-press menu. */
@@ -2707,9 +2709,15 @@ object OverlayPanelManager {
         if (isPanelShowing) return
         if (!android.provider.Settings.canDrawOverlays(context)) return
         handler.post {
-            // A repeat of something already showing or waiting replaces that entry rather than
-            // appearing twice — messaging apps re-post the same key on every new message.
-            headsUpQueue.removeAll { it.key == data.key }
+            // Messaging apps keep one notification per conversation and update it, so successive
+            // texts in a thread all arrive under the same key. Matching on the key alone therefore
+            // treated every new message as a re-post of the last — it replaced whatever was on
+            // screen and wiped any queued sibling, which is why a run of texts only ever produced
+            // one popup however the mode was set.
+            //
+            // Compare the body too: same key with the same body really is a duplicate re-post and
+            // is dropped, while same key with new text is a new message and gets its own turn.
+            headsUpQueue.removeAll { it.key == data.key && it.text == data.text }
             // Queue mode holds arrivals back; otherwise newest wins, as Android's own heads-up
             // does. Either way a reply being typed is never torn down — that popup owns a focused
             // field and unsaved text, so the newcomer waits until the reply is done.
@@ -2717,9 +2725,24 @@ object OverlayPanelManager {
             // that threw, and then nothing is on screen, no dismiss timer exists to call
             // removeHeadsUp(), and the queue can never advance — every later notification queues
             // for ever. Replace mode hid this because it shows regardless of the key.
-            val busy = headsUpShowingKey != null && headsUpView != null &&
-                headsUpShowingKey != data.key
-            if (busy && (headsUpQueueMode || replyBoxOpen)) {
+            val isRepostOfShowing = headsUpShowingKey == data.key && headsUpShowingText == data.text
+
+            // A popup with an open reply box is never disturbed, for any reason. This is checked
+            // before anything else rather than folded into the busy test below: an exact re-post
+            // of what is already showing — which messaging apps send on read-state changes — would
+            // otherwise fall through to showHeadsUpNow(), rebuild the popup, and take the focused
+            // field and whatever had been typed into it with it.
+            if (replyBoxOpen && headsUpView != null) {
+                if (!isRepostOfShowing) {
+                    headsUpQueue.addLast(data)
+                    while (headsUpQueue.size > HEADS_UP_QUEUE_MAX) headsUpQueue.removeFirst()
+                }
+                // An exact re-post has nothing new to say, so it is dropped rather than queued.
+                return@post
+            }
+
+            val busy = headsUpShowingKey != null && headsUpView != null && !isRepostOfShowing
+            if (busy && headsUpQueueMode) {
                 headsUpQueue.addLast(data)
                 while (headsUpQueue.size > HEADS_UP_QUEUE_MAX) headsUpQueue.removeFirst()
                 return@post
@@ -2739,6 +2762,7 @@ object OverlayPanelManager {
         run {
             removeHeadsUp(advanceQueue = false); replyBoxOpen = false
             headsUpShowingKey = data.key
+            headsUpShowingText = data.text
             try {
                 if (windowManager == null) windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
                 val dp = context.resources.displayMetrics.density
@@ -2786,7 +2810,7 @@ object OverlayPanelManager {
                 // Leave nothing half-shown: drop the references and let the next queued popup
                 // have a go, rather than blocking on a popup that never appeared.
                 headsUpView = null; headsUpParams = null; headsUpUsingAccessibility = false
-                headsUpShowingKey = null
+                headsUpShowingKey = null; headsUpShowingText = null
                 headsUpQueue.removeFirstOrNull()?.let { next ->
                     handler.post { showHeadsUpNow(context, next) }
                 }
@@ -3070,7 +3094,7 @@ object OverlayPanelManager {
             else try { windowManager?.removeView(it) } catch (_: Exception) {}
         }
         headsUpView = null; headsUpParams = null; headsUpUsingAccessibility = false
-        headsUpShowingKey = null
+        headsUpShowingKey = null; headsUpShowingText = null
         if (advanceQueue) {
             val next = headsUpQueue.firstOrNull()
             val ctx = stripContext
