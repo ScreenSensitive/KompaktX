@@ -32,6 +32,9 @@ object ShortcutTrigger {
     const val DOUBLE_TAP_BACK = 4
     const val VOLUME_UP = 5
     const val VOLUME_DOWN = 6
+    const val SINGLE_TAP_RECENTS = 7
+    const val SINGLE_TAP_BACK = 8
+    const val SINGLE_TAP_HOME = 9
 
     fun label(t: Int): String = when (t) {
         LONG_PRESS_RECENTS -> "Long Press Recents"
@@ -40,6 +43,9 @@ object ShortcutTrigger {
         DOUBLE_TAP_BACK -> "Double Tap Back"
         VOLUME_UP -> "Volume Up"
         VOLUME_DOWN -> "Volume Down"
+        SINGLE_TAP_RECENTS -> "Press Recents"
+        SINGLE_TAP_BACK -> "Press Back"
+        SINGLE_TAP_HOME -> "Press Home"
         else -> "None"
     }
 
@@ -49,11 +55,14 @@ object ShortcutTrigger {
     /**
      * Triggers offered for Reply to Popup, which may also claim the volume keys.
      *
-     * Volume is deliberately absent from [ALL]: an always-on shortcut bound to it would swallow
-     * volume control entirely, whereas Reply to Popup only claims a key while a repliable popup is
-     * on screen and hands it straight back afterwards.
+     * Volume and the single presses are deliberately absent from [ALL]: an always-on shortcut
+     * bound to any of them would swallow that button outright, whereas Reply to Popup claims a key
+     * only while a repliable popup is on screen and hands it straight back afterwards. A single
+     * press also acts immediately, so during a popup it supersedes any double-tap on the same
+     * button rather than waiting to see whether a second press arrives.
      */
     val POPUP_ALL = intArrayOf(
+        SINGLE_TAP_RECENTS, SINGLE_TAP_BACK, SINGLE_TAP_HOME,
         LONG_PRESS_RECENTS, DOUBLE_TAP_RECENTS, LONG_PRESS_BACK, DOUBLE_TAP_BACK,
         VOLUME_UP, VOLUME_DOWN
     )

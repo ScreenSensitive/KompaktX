@@ -428,7 +428,7 @@ fun KompaktXApp() {
         Spacer(Modifier.height(20.dp))
 
         // Trigger Settings
-        SectionHeader("Notification Tray Shortcut")
+        SectionHeader("Panel")
         SettingsCard {
             Row(
                 modifier = Modifier.fillMaxWidth()
@@ -448,8 +448,7 @@ fun KompaktXApp() {
 
         Spacer(Modifier.height(20.dp))
 
-        // Feature Toggles
-        SectionHeader("Features")
+        // Feature toggles continue the Panel section above rather than starting a new one.
         SettingsCard {
             Row(
                 modifier = Modifier.fillMaxWidth()
@@ -569,8 +568,10 @@ fun KompaktXApp() {
 
         Spacer(Modifier.height(20.dp))
 
-        // Font Size
-        SectionHeader("Font Size")
+        // Appearance — three pickers that all change how the panel looks, under one header rather
+        // than three, since separate headers made them read as unrelated features.
+        SectionHeader("Appearance")
+        SubLabel("Font Size")
         SettingsCard {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(12.dp),
@@ -610,8 +611,7 @@ fun KompaktXApp() {
 
         Spacer(Modifier.height(20.dp))
 
-        // Theme
-        SectionHeader("Clock Style")
+        SubLabel("Clock Style")
         SettingsCard {
             Row(Modifier.fillMaxWidth().padding(12.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -646,7 +646,7 @@ fun KompaktXApp() {
 
         Spacer(Modifier.height(20.dp))
 
-        SectionHeader("Theme")
+        SubLabel("Theme")
         SettingsCard {
             Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
                 data class ThemeOpt(val label: String, val mode: Int)
@@ -821,29 +821,13 @@ private fun PopupReplyScreen(
             fontSize = 13.sp, color = FG, modifier = Modifier.padding(top = 4.dp, bottom = 18.dp)
         )
 
-        SectionHeader("How it works")
         SettingsCard {
-            Column(Modifier.padding(16.dp)) {
-                Text(
-                    "While a popup that can be replied to is on screen, the button you pick here " +
-                        "opens its reply box. Whatever that button normally does is paused for " +
-                        "those few seconds, so one press cannot set off two things at once.",
-                    fontSize = 13.sp, color = FG
-                )
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "The moment the popup goes, the button goes back to its usual job. That means " +
-                        "you can share a button with one of the shortcuts above rather than giving " +
-                        "up a gesture for this.",
-                    fontSize = 13.sp, color = FG
-                )
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "Nothing is borrowed when no popup is showing, or when the notification has no " +
-                        "reply to open — a press simply does what it always does.",
-                    fontSize = 13.sp, color = FG
-                )
-            }
+            Text(
+                "While a popup you can reply to is on screen, this button opens its reply box. " +
+                    "Whatever it normally does is paused until the popup goes, so one press can't " +
+                    "do two things — which means you can share a button with a shortcut above.",
+                fontSize = 13.sp, color = FG, modifier = Modifier.padding(16.dp)
+            )
         }
 
         Spacer(Modifier.height(20.dp))
@@ -872,6 +856,10 @@ private fun PopupReplyScreen(
                         val note = when (trigger) {
                             ShortcutTrigger.VOLUME_UP, ShortcutTrigger.VOLUME_DOWN ->
                                 "Volume still works normally when no popup is up"
+                            ShortcutTrigger.SINGLE_TAP_RECENTS,
+                            ShortcutTrigger.SINGLE_TAP_BACK,
+                            ShortcutTrigger.SINGLE_TAP_HOME ->
+                                "Fastest. The button does its usual job once the popup goes"
                             else -> null
                         }
                         if (note != null) Text(note, fontSize = 12.sp, color = FG)
@@ -1171,6 +1159,12 @@ private fun LocationToggleScreen(
     }
 }
 
+
+@Composable
+private fun SubLabel(text: String) {
+    Text(text, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = FG,
+        modifier = Modifier.padding(bottom = 6.dp))
+}
 
 @Composable
 private fun SectionHeader(text: String) {

@@ -230,6 +230,19 @@ class RecentsButtonService : AccessibilityService() {
     override fun onKeyEvent(event: KeyEvent?): Boolean {
         if (event == null) return false
 
+        // Reply to Popup single presses come first: they act at once, so they must not be held
+        // behind the long-press or double-tap detection below.
+        val singleTapReply = when (event.keyCode) {
+            KeyEvent.KEYCODE_APP_SWITCH -> ShortcutTrigger.SINGLE_TAP_RECENTS
+            KeyEvent.KEYCODE_BACK -> ShortcutTrigger.SINGLE_TAP_BACK
+            KeyEvent.KEYCODE_HOME -> ShortcutTrigger.SINGLE_TAP_HOME
+            else -> null
+        }
+        if (singleTapReply != null && popupReplyWantsTrigger(singleTapReply)) {
+            if (event.action == KeyEvent.ACTION_UP) OverlayPanelManager.openHeadsUpReply()
+            return true
+        }
+
         when (event.keyCode) {
             KeyEvent.KEYCODE_APP_SWITCH -> {
                 // Only take the button when something is actually bound to it. A short press with
