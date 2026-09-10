@@ -2888,7 +2888,7 @@ object OverlayPanelManager {
         // replyInput exists for it to read from.
         var doSend: (() -> Unit)? = null
         val replyInput = EditText(context).apply {
-            hint = "Reply..."; setHintTextColor(BLACK); setTextColor(BLACK); textSize = baseTextSize; setSingleLine(true)
+            hint = "Reply..."; setHintTextColor(BLACK); setTextColor(BLACK); textSize = baseTextSize
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             val ibg = GradientDrawable().apply { setColor(WHITE); setStroke(borderW, BLACK); cornerRadius = 8 * dp }
             background = ibg; setPadding(padSmall, (6 * dp).toInt(), padSmall, (6 * dp).toInt())
@@ -2896,8 +2896,22 @@ object OverlayPanelManager {
                 setHeadsUpFocusable(true)
                 focusReplyInput(context, this)
             }
-            // Declaring the action makes a soft keyboard offer a send key instead of a newline.
-            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEND
+            // The field's shape follows the setting. With Enter-to-send on it is single line and
+            // the keyboard is told the action is Send, so it shows a send key. With it off the
+            // field takes newlines and the keyboard is told nothing, so Enter breaks the line
+            // instead — previously it advertised Send either way and then, being single line,
+            // did nothing at all when pressed.
+            if (replyOnEnter) {
+                setSingleLine(true)
+                imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEND
+            } else {
+                inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                    android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                    android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+                imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_NONE
+                // Capped so a long reply grows the popup a little rather than without limit.
+                maxLines = 4
+            }
             // Both listeners consult replyOnEnter when the key arrives, so toggling the setting
             // takes effect on the next press rather than only on popups built afterwards. They
             // call the local `doSend` rather than a field on the manager: that field was shared
