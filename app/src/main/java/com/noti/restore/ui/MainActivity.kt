@@ -180,6 +180,18 @@ fun KompaktXApp() {
     val hapticsEnabled by prefs.hapticsEnabled.collectAsState(initial = true)
     val headsUpDuration by prefs.headsUpDuration.collectAsState(initial = 5000)
     val replyOnEnter by prefs.replyOnEnter.collectAsState(initial = true)
+    var showTriggerPage by remember { mutableStateOf(false) }
+    BackHandler(enabled = showTriggerPage) { showTriggerPage = false }
+    if (showTriggerPage) {
+        TriggerScreen(
+            current = triggerMode,
+            hasAccessibility = hasAccessibility,
+            onSelect = { scope.launch { prefs.setTriggerMode(it) } },
+            onBack = { showTriggerPage = false }
+        )
+        return
+    }
+
     var showHeadsUpPage by remember { mutableStateOf(false) }
     BackHandler(enabled = showHeadsUpPage) { showHeadsUpPage = false }
 
@@ -405,24 +417,19 @@ fun KompaktXApp() {
         // Trigger Settings
         SectionHeader("Notification Tray Shortcut")
         SettingsCard {
-            TriggerOption("Swipe right from left edge", TriggerMode.SWIPE_LEFT_EDGE, triggerMode) {
-                scope.launch { prefs.setTriggerMode(TriggerMode.SWIPE_LEFT_EDGE) }
-            }
-            Divider(color = FG, thickness = 1.dp)
-            TriggerOption("Swipe left from right edge", TriggerMode.SWIPE_RIGHT_EDGE, triggerMode) {
-                scope.launch { prefs.setTriggerMode(TriggerMode.SWIPE_RIGHT_EDGE) }
-            }
-            Divider(color = FG, thickness = 1.dp)
-            TriggerOption("Pull up from bottom-right edge", TriggerMode.PULL_UP_BOTTOM_RIGHT, triggerMode) {
-                scope.launch { prefs.setTriggerMode(TriggerMode.PULL_UP_BOTTOM_RIGHT) }
-            }
-            Divider(color = FG, thickness = 1.dp)
-            TriggerOption("Pull up from bottom-left edge", TriggerMode.PULL_UP_BOTTOM_LEFT, triggerMode) {
-                scope.launch { prefs.setTriggerMode(TriggerMode.PULL_UP_BOTTOM_LEFT) }
-            }
-            Divider(color = FG, thickness = 1.dp)
-            TriggerOption("Recents button (needs Accessibility)", TriggerMode.RECENTS_BUTTON, triggerMode) {
-                scope.launch { prefs.setTriggerMode(TriggerMode.RECENTS_BUTTON) }
+            Row(
+                modifier = Modifier.fillMaxWidth()
+                    .clickable { showTriggerPage = true }
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.OpenWith, null, tint = FG, modifier = Modifier.size(24.dp))
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("How the panel opens", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = FG)
+                    Text(triggerModeLabel(triggerMode), fontSize = 12.sp, color = FG)
+                }
+                Icon(Icons.Default.ChevronRight, null, tint = FG, modifier = Modifier.size(20.dp))
             }
         }
 
@@ -716,6 +723,80 @@ fun KompaktXApp() {
                 .padding(top = 6.dp)
         )
 
+        Spacer(Modifier.height(32.dp))
+    }
+}
+
+/** One-line description of a trigger mode, used on the settings row and the page. */
+private fun triggerModeLabel(mode: Int): String = when (mode) {
+    TriggerMode.SWIPE_LEFT_EDGE -> "Swipe right from the left edge"
+    TriggerMode.SWIPE_RIGHT_EDGE -> "Swipe left from the right edge"
+    TriggerMode.PULL_UP_BOTTOM_RIGHT -> "Pull up from the bottom-right edge"
+    TriggerMode.PULL_UP_BOTTOM_LEFT -> "Pull up from the bottom-left edge"
+    TriggerMode.RECENTS_BUTTON -> "Press the Recents button"
+    TriggerMode.NONE -> "Off — the panel cannot be opened"
+    else -> "Swipe to open"
+}
+
+/** How the notification panel is opened, including turning it off entirely. */
+@Composable
+private fun TriggerScreen(
+    current: Int,
+    hasAccessibility: Boolean,
+    onSelect: (Int) -> Unit,
+    onBack: () -> Unit
+) {
+    Column(
+        Modifier.fillMaxSize().background(BG).verticalScroll(rememberScrollState()).padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable(onClick = onBack).heightIn(min = 44.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.ChevronLeft, null, tint = FG, modifier = Modifier.size(22.dp))
+            Text("Back", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = FG)
+        }
+        Spacer(Modifier.height(12.dp))
+        Text("How the panel opens", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = FG)
+        Text(
+            "Pick the gesture or button that brings up the notification tray.",
+            fontSize = 13.sp, color = FG, modifier = Modifier.padding(top = 4.dp, bottom = 18.dp)
+        )
+
+        SettingsCard {
+            val modes = listOf(
+                TriggerMode.SWIPE_LEFT_EDGE to null,
+                TriggerMode.SWIPE_RIGHT_EDGE to null,
+                TriggerMode.PULL_UP_BOTTOM_RIGHT to null,
+                TriggerMode.PULL_UP_BOTTOM_LEFT to null,
+                TriggerMode.RECENTS_BUTTON to
+                    (if (hasAccessibility) "Uses the Accessibility Service"
+                     else "Needs the Accessibility Service"),
+                TriggerMode.NONE to "Nothing opens the tray; popups and shortcuts still work"
+            )
+            modes.forEachIndexed { index, (mode, note) ->
+                if (index > 0) Divider(color = FG, thickness = 1.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth()
+                        .clickable { onSelect(mode) }
+                        .heightIn(min = 44.dp)
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Filled square rather than a ring: a thin outline can disappear into the
+                    // panel's texture at this density.
+                    Box(Modifier.size(16.dp).border(2.dp, FG), contentAlignment = Alignment.Center) {
+                        if (current == mode) Box(Modifier.size(8.dp).background(FG))
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(triggerModeLabel(mode), fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp, color = FG)
+                        if (note != null) Text(note, fontSize = 12.sp, color = FG)
+                    }
+                }
+            }
+        }
         Spacer(Modifier.height(32.dp))
     }
 }
@@ -1147,26 +1228,6 @@ private fun RecentsLayoutPicker(currentMode: Int, onSelect: (Int) -> Unit) {
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun TriggerOption(label: String, mode: Int, currentMode: Int, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth()
-            .clickable { onClick() }
-            .padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(label, fontSize = 14.sp, color = FG, modifier = Modifier.weight(1f))
-        Box(
-            modifier = Modifier.size(22.dp)
-                .border(2.dp, FG, RoundedCornerShape(11.dp))
-                .then(
-                    if (mode == currentMode) Modifier.padding(4.dp).background(FG, RoundedCornerShape(7.dp))
-                    else Modifier
-                )
-        )
     }
 }
 

@@ -229,8 +229,41 @@ object OverlayPanelManager {
             }
         }
 
+        installTrigger(context, windowType, dp)
+    }
+
+    fun removeTouchStrip() {
+        touchStripView?.let { view ->
+            try { windowManager?.removeView(view) } catch (_: Exception) {}
+        }
+        touchStripView = null
+        brightnessOverlay?.let { view ->
+            try { windowManager?.removeView(view) } catch (_: Exception) {}
+        }
+        brightnessOverlay = null
+        com.noti.restore.service.RecentsButtonService.clearAccessibilityBrightness()
+        brightnessObserver?.let { obs ->
+            try { stripContext?.contentResolver?.unregisterContentObserver(obs) } catch (_: Exception) {}
+        }
+        brightnessObserver = null
+        brightnessModeObserver?.let { obs ->
+            try { stripContext?.contentResolver?.unregisterContentObserver(obs) } catch (_: Exception) {}
+        }
+        brightnessModeObserver = null
+    }
+
+
+    /**
+     * Put the edge strip in place for the current trigger mode. Nothing else — no brightness
+     * overlay, no observers — so it can be re-run on its own.
+     */
+    private fun installTrigger(context: Context, windowType: Int, dp: Float) {
         if (triggerMode == TriggerMode.RECENTS_BUTTON) {
             Log.d(TAG, "Trigger mode: Recents button (no touch strip)")
+            return
+        }
+        if (triggerMode == TriggerMode.NONE) {
+            Log.d(TAG, "Trigger mode: none — no way to open the panel")
             return
         }
 
@@ -274,28 +307,28 @@ object OverlayPanelManager {
         Log.d(TAG, "Touch strip created, triggerMode=$triggerMode")
     }
 
-    fun removeTouchStrip() {
+    /**
+     * Swap the edge strip for a different trigger without disturbing anything else.
+     *
+     * Deliberately not a call to createTouchStrip(): that begins with removeTouchStrip(), which
+     * also tears down the brightness overlay, the lockscreen accessibility overlay and both
+     * observers. For the moment before loadSavedBrightness() re-applied, no window held a
+     * brightness override at all, so the panel jumped to the system value — a visible flash of
+     * light, most obvious when the front light was meant to be off.
+     */
+    fun recreateTouchStrip() {
+        val context = stripContext ?: return
         touchStripView?.let { view ->
             try { windowManager?.removeView(view) } catch (_: Exception) {}
         }
         touchStripView = null
-        brightnessOverlay?.let { view ->
-            try { windowManager?.removeView(view) } catch (_: Exception) {}
+        if (windowManager == null) {
+            windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         }
-        brightnessOverlay = null
-        com.noti.restore.service.RecentsButtonService.clearAccessibilityBrightness()
-        brightnessObserver?.let { obs ->
-            try { stripContext?.contentResolver?.unregisterContentObserver(obs) } catch (_: Exception) {}
-        }
-        brightnessObserver = null
-        brightnessModeObserver?.let { obs ->
-            try { stripContext?.contentResolver?.unregisterContentObserver(obs) } catch (_: Exception) {}
-        }
-        brightnessModeObserver = null
-    }
-
-    fun recreateTouchStrip() {
-        stripContext?.let { createTouchStrip(it) }
+        val windowType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_SYSTEM_ALERT
+        installTrigger(context, windowType, context.resources.displayMetrics.density)
     }
 
     val isPanelShowing: Boolean get() = panelView != null

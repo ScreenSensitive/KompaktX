@@ -19,6 +19,8 @@ object TriggerMode {
     const val PULL_UP_BOTTOM_RIGHT = 2
     const val PULL_UP_BOTTOM_LEFT = 3
     const val RECENTS_BUTTON = 4
+    /** No trigger at all — the panel cannot be opened by gesture or button. */
+    const val NONE = 5
 }
 
 /** Which physical gesture triggers a shortcut action */
