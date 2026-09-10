@@ -109,8 +109,8 @@ object OverlayPanelManager {
     var headsUpEnabled = true
     var recentAppsEnabled = true
     var triggerMode = TriggerMode.SWIPE_LEFT_EDGE
-    var fontSizeOffset = 0
-    var einkControlsEnabled = false
+    var fontSizeOffset = 2
+    var einkControlsEnabled = true
     var hapticsEnabled = true
     /** How long a heads-up popup stays on screen, in milliseconds. */
     var headsUpDurationMs = 5000L
@@ -119,9 +119,9 @@ object OverlayPanelManager {
     var showLocationToggle = false
     var hiddenNotiApps: Set<String> = emptySet()
     var hiddenRecentApps: Set<String> = emptySet()
-    var recentsLayoutMode: Int = RecentsLayoutMode.INLINE
+    var recentsLayoutMode: Int = RecentsLayoutMode.TABBED
     var hideAppIcons: Boolean = false
-    var tabPosition: Int = com.noti.restore.ui.TabPosition.TOP
+    var tabPosition: Int = com.noti.restore.ui.TabPosition.BOTTOM
 
     // Dark mode for the overlay UI — set from MainActivity based on theme pref + system uiMode.
     // Swaps every WHITE/BLACK reference within the overlay so the panel inverts cleanly.

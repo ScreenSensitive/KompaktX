@@ -107,17 +107,21 @@ class PreferencesManager(private val context: Context) {
     val replyOnEnter: Flow<Boolean> = context.dataStore.data.map { it[REPLY_ON_ENTER] ?: true }
     val showLocationToggle: Flow<Boolean> = context.dataStore.data.map { it[SHOW_LOCATION_TOGGLE] ?: false }
     val triggerMode: Flow<Int> = context.dataStore.data.map { it[TRIGGER_MODE] ?: TriggerMode.SWIPE_LEFT_EDGE }
-    val fontSizeOffset: Flow<Int> = context.dataStore.data.map { it[FONT_SIZE_OFFSET] ?: 0 }
-    val einkControlsEnabled: Flow<Boolean> = context.dataStore.data.map { it[EINK_CONTROLS_ENABLED] ?: false }
+    // These four default to what suits the Kompakt rather than the blandest option. The fallback
+    // only applies when the key is absent, and keys are written solely by an actual tap in
+    // settings — so anyone who already chose a value keeps it, including where their choice
+    // happens to match the old default.
+    val fontSizeOffset: Flow<Int> = context.dataStore.data.map { it[FONT_SIZE_OFFSET] ?: 2 }
+    val einkControlsEnabled: Flow<Boolean> = context.dataStore.data.map { it[EINK_CONTROLS_ENABLED] ?: true }
 
     val shortcutFrontLight: Flow<Int> = context.dataStore.data.map { it[SHORTCUT_FRONT_LIGHT] ?: ShortcutTrigger.NONE }
     val shortcutEinkRefresh: Flow<Int> = context.dataStore.data.map { it[SHORTCUT_EINK_REFRESH] ?: ShortcutTrigger.NONE }
     val shortcutRefreshCycle: Flow<Int> = context.dataStore.data.map { it[SHORTCUT_REFRESH_CYCLE] ?: ShortcutTrigger.NONE }
     val volumeLongPressMedia: Flow<Boolean> = context.dataStore.data.map { it[VOLUME_LONG_PRESS_MEDIA] ?: false }
-    val recentsLayoutMode: Flow<Int> = context.dataStore.data.map { it[RECENTS_LAYOUT_MODE] ?: RecentsLayoutMode.INLINE }
+    val recentsLayoutMode: Flow<Int> = context.dataStore.data.map { it[RECENTS_LAYOUT_MODE] ?: RecentsLayoutMode.TABBED }
     val hideAppIcons: Flow<Boolean> = context.dataStore.data.map { it[HIDE_APP_ICONS] ?: false }
     val themeMode: Flow<Int> = context.dataStore.data.map { it[THEME_MODE] ?: ThemeMode.SYSTEM }
-    val tabPosition: Flow<Int> = context.dataStore.data.map { it[TAB_POSITION] ?: TabPosition.TOP }
+    val tabPosition: Flow<Int> = context.dataStore.data.map { it[TAB_POSITION] ?: TabPosition.BOTTOM }
 
     suspend fun setHeadsUpEnabled(enabled: Boolean) { context.dataStore.edit { it[HEADS_UP_ENABLED] = enabled } }
     suspend fun setRecentAppsEnabled(enabled: Boolean) { context.dataStore.edit { it[RECENT_APPS_ENABLED] = enabled } }

@@ -126,11 +126,11 @@ fun KompaktXApp() {
     val headsUpEnabled by prefs.headsUpEnabled.collectAsState(initial = true)
     val recentAppsEnabled by prefs.recentAppsEnabled.collectAsState(initial = true)
     val triggerMode by prefs.triggerMode.collectAsState(initial = TriggerMode.SWIPE_LEFT_EDGE)
-    val fontSizeOffset by prefs.fontSizeOffset.collectAsState(initial = 0)
-    val einkControlsEnabled by prefs.einkControlsEnabled.collectAsState(initial = false)
+    val fontSizeOffset by prefs.fontSizeOffset.collectAsState(initial = 2)
+    val einkControlsEnabled by prefs.einkControlsEnabled.collectAsState(initial = true)
     val hiddenNotiApps by prefs.hiddenNotiApps.collectAsState(initial = emptySet())
     val hiddenRecentApps by prefs.hiddenRecentApps.collectAsState(initial = emptySet())
-    val recentsLayoutMode by prefs.recentsLayoutMode.collectAsState(initial = RecentsLayoutMode.INLINE)
+    val recentsLayoutMode by prefs.recentsLayoutMode.collectAsState(initial = RecentsLayoutMode.TABBED)
     val hideAppIcons by prefs.hideAppIcons.collectAsState(initial = false)
     // Collected as nullable so that "DataStore hasn't answered yet" is distinguishable from a
     // real stored value. Every flow here comes from the same DataStore, so one arriving means
@@ -139,7 +139,7 @@ fun KompaktXApp() {
         .collectAsState(initial = null)
     val prefsLoaded = storedThemeMode != null
     val themeMode = storedThemeMode ?: ThemeMode.SYSTEM
-    val tabPosition by prefs.tabPosition.collectAsState(initial = TabPosition.TOP)
+    val tabPosition by prefs.tabPosition.collectAsState(initial = TabPosition.BOTTOM)
 
     // Resolve effective dark state from the theme pref + system uiMode.
     val systemDark = (context.resources.configuration.uiMode and
