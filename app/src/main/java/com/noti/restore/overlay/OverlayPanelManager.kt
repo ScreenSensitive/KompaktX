@@ -663,6 +663,22 @@ object OverlayPanelManager {
             setTextColor(BLACK); textSize = baseTinySize
         }
         dateCol.addView(clockLine)
+        // Long-press the date block — date, clock and battery are one target — to open KompaktX's
+        // settings. A plain tap is deliberately left doing nothing, so the gesture cannot be hit by
+        // a stray press now that the panel's dead space is inert.
+        dateCol.isLongClickable = true
+        dateCol.setOnLongClickListener {
+            tapFeedback(context)
+            try {
+                context.startActivity(
+                    Intent(context, com.noti.restore.ui.MainActivity::class.java).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                )
+            } catch (_: Exception) {}
+            dismissPanel()
+            true
+        }
         topBar.addView(dateCol)
         // The header is built once, so without this the clock freezes at whatever it read when the
         // panel opened. Re-read on the minute rather than every second: one partial refresh a
