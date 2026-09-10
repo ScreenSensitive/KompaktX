@@ -182,6 +182,17 @@ fun KompaktXApp() {
     val hapticsEnabled by prefs.hapticsEnabled.collectAsState(initial = true)
     val headsUpDuration by prefs.headsUpDuration.collectAsState(initial = 5000)
     val replyOnEnter by prefs.replyOnEnter.collectAsState(initial = true)
+    var showPopupReplyPage by remember { mutableStateOf(false) }
+    BackHandler(enabled = showPopupReplyPage) { showPopupReplyPage = false }
+    if (showPopupReplyPage) {
+        PopupReplyScreen(
+            current = popupReplyTrigger,
+            onSelect = { scope.launch { prefs.setPopupReplyTrigger(it) } },
+            onBack = { showPopupReplyPage = false }
+        )
+        return
+    }
+
     var showTriggerPage by remember { mutableStateOf(false) }
     BackHandler(enabled = showTriggerPage) { showTriggerPage = false }
     if (showTriggerPage) {
@@ -531,15 +542,24 @@ fun KompaktXApp() {
                 onTriggerChange = { scope.launch { prefs.setShortcutTrigger("eink_refresh", it) } }
             )
             Divider(color = FG, thickness = 1.dp)
-            ShortcutRow(
-                action = "popup_reply",
-                label = "Reply to Popup",
-                description = "While a notification popup is up, this opens its reply box instead " +
-                    "of its usual action — so you needn't reach the top of the screen",
-                icon = Icons.Default.Reply,
-                currentTrigger = popupReplyTrigger,
-                onTriggerChange = { scope.launch { prefs.setPopupReplyTrigger(it) } }
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth()
+                    .clickable { showPopupReplyPage = true }
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.Reply, null, tint = FG, modifier = Modifier.size(24.dp))
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Reply to Popup", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = FG)
+                    Text(
+                        if (popupReplyTrigger == ShortcutTrigger.NONE) "Off"
+                        else ShortcutTrigger.label(popupReplyTrigger),
+                        fontSize = 12.sp, color = FG
+                    )
+                }
+                Icon(Icons.Default.ChevronRight, null, tint = FG, modifier = Modifier.size(20.dp))
+            }
             Divider(color = FG, thickness = 1.dp)
             ToggleRow("Volume Long Press → Media Skip",
                 "Long press Vol Up/Down to skip/prev track (only when media is playing)",
@@ -770,6 +790,95 @@ fun KompaktXApp() {
                 .padding(top = 6.dp)
         )
 
+        Spacer(Modifier.height(32.dp))
+    }
+}
+
+/**
+ * Reply to Popup: the gesture, and an explanation of how it borrows a button.
+ */
+@Composable
+private fun PopupReplyScreen(
+    current: Int,
+    onSelect: (Int) -> Unit,
+    onBack: () -> Unit
+) {
+    Column(
+        Modifier.fillMaxSize().background(BG).verticalScroll(rememberScrollState()).padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable(onClick = onBack).heightIn(min = 44.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.ChevronLeft, null, tint = FG, modifier = Modifier.size(22.dp))
+            Text("Back", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = FG)
+        }
+        Spacer(Modifier.height(12.dp))
+        Text("Reply to Popup", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = FG)
+        Text(
+            "Open a notification popup's reply box with a hardware button, instead of reaching the " +
+                "top of the screen.",
+            fontSize = 13.sp, color = FG, modifier = Modifier.padding(top = 4.dp, bottom = 18.dp)
+        )
+
+        SectionHeader("How it works")
+        SettingsCard {
+            Column(Modifier.padding(16.dp)) {
+                Text(
+                    "While a popup that can be replied to is on screen, the button you pick here " +
+                        "opens its reply box. Whatever that button normally does is paused for " +
+                        "those few seconds, so one press cannot set off two things at once.",
+                    fontSize = 13.sp, color = FG
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "The moment the popup goes, the button goes back to its usual job. That means " +
+                        "you can share a button with one of the shortcuts above rather than giving " +
+                        "up a gesture for this.",
+                    fontSize = 13.sp, color = FG
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Nothing is borrowed when no popup is showing, or when the notification has no " +
+                        "reply to open — a press simply does what it always does.",
+                    fontSize = 13.sp, color = FG
+                )
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+        SectionHeader("Button")
+        SettingsCard {
+            val options = listOf(ShortcutTrigger.NONE) + ShortcutTrigger.POPUP_ALL.toList()
+            options.forEachIndexed { index, trigger ->
+                if (index > 0) Divider(color = FG, thickness = 1.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth()
+                        .clickable { onSelect(trigger) }
+                        .heightIn(min = 44.dp)
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(Modifier.size(16.dp).border(2.dp, FG), contentAlignment = Alignment.Center) {
+                        if (current == trigger) Box(Modifier.size(8.dp).background(FG))
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            if (trigger == ShortcutTrigger.NONE) "Off"
+                            else ShortcutTrigger.label(trigger),
+                            fontWeight = FontWeight.Bold, fontSize = 14.sp, color = FG
+                        )
+                        val note = when (trigger) {
+                            ShortcutTrigger.VOLUME_UP, ShortcutTrigger.VOLUME_DOWN ->
+                                "Volume still works normally when no popup is up"
+                            else -> null
+                        }
+                        if (note != null) Text(note, fontSize = 12.sp, color = FG)
+                    }
+                }
+            }
+        }
         Spacer(Modifier.height(32.dp))
     }
 }

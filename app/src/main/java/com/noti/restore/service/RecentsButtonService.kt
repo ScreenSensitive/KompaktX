@@ -118,6 +118,7 @@ class RecentsButtonService : AccessibilityService() {
         @Volatile var longPressRecentsAction = ""
         @Volatile var doubleTapRecentsAction = ""
         @Volatile var longPressBackAction = ""
+        @Volatile var doubleTapBackAction = ""
 
         // Volume long press for media skip (only when media is playing)
         @Volatile var volumeLongPressMediaEnabled = false
@@ -146,6 +147,7 @@ class RecentsButtonService : AccessibilityService() {
             longPressRecentsAction = ""
             doubleTapRecentsAction = ""
             longPressBackAction = ""
+            doubleTapBackAction = ""
 
             // Assign each action to its trigger
             fun assign(trigger: Int, action: String) {
@@ -153,6 +155,7 @@ class RecentsButtonService : AccessibilityService() {
                     ShortcutTrigger.LONG_PRESS_RECENTS -> longPressRecentsAction = action
                     ShortcutTrigger.DOUBLE_TAP_RECENTS -> doubleTapRecentsAction = action
                     ShortcutTrigger.LONG_PRESS_BACK -> longPressBackAction = action
+                    ShortcutTrigger.DOUBLE_TAP_BACK -> doubleTapBackAction = action
                 }
             }
             assign(frontLightTrigger, "front_light")
@@ -176,6 +179,8 @@ class RecentsButtonService : AccessibilityService() {
     // Back: long press detection
     private var backLongPressRunnable: Runnable? = null
     private var backLongPressed = false
+    private var backSingleTapRunnable: Runnable? = null
+    private var lastBackUpTime = 0L
 
     // Volume: long press detection for media skip
     private var volumeLongPressRunnable: Runnable? = null
@@ -241,8 +246,9 @@ class RecentsButtonService : AccessibilityService() {
 
             KeyEvent.KEYCODE_BACK -> {
                 // Long press back shortcut
-                if (longPressBackAction.isNotEmpty() ||
-                    popupReplyWantsTrigger(ShortcutTrigger.LONG_PRESS_BACK)) {
+                if (longPressBackAction.isNotEmpty() || doubleTapBackAction.isNotEmpty() ||
+                    popupReplyWantsTrigger(ShortcutTrigger.LONG_PRESS_BACK) ||
+                    popupReplyWantsTrigger(ShortcutTrigger.DOUBLE_TAP_BACK)) {
                     return handleBackAdvanced(event)
                 }
                 // Default: peel back one overlay layer — the long-press menu if it is up,
@@ -265,6 +271,14 @@ class RecentsButtonService : AccessibilityService() {
             }
 
             KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN -> {
+                // Claimed only for as long as a repliable popup is showing; volume control is
+                // untouched at every other moment.
+                val volTrigger = if (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP)
+                    ShortcutTrigger.VOLUME_UP else ShortcutTrigger.VOLUME_DOWN
+                if (popupReplyWantsTrigger(volTrigger)) {
+                    if (event.action == KeyEvent.ACTION_UP) OverlayPanelManager.openHeadsUpReply()
+                    return true
+                }
                 if (volumeLongPressMediaEnabled && isMediaPlaying()) {
                     return handleVolumeAdvanced(event)
                 }
@@ -369,6 +383,8 @@ class RecentsButtonService : AccessibilityService() {
                         OverlayPanelManager.openHeadsUpReply()
                     } else if (longPressBackAction.isNotEmpty()) {
                         executeAction(longPressBackAction)
+                    } else {
+                        backLongPressed = false
                     }
                 }
                 handler.postDelayed(backLongPressRunnable!!, LONG_PRESS_DELAY)
@@ -380,6 +396,29 @@ class RecentsButtonService : AccessibilityService() {
 
                 if (backLongPressed) {
                     backLongPressed = false
+                    return true
+                }
+
+                val nowBack = System.currentTimeMillis()
+                val backDoubleWanted = doubleTapBackAction.isNotEmpty() ||
+                    popupReplyWantsTrigger(ShortcutTrigger.DOUBLE_TAP_BACK)
+                if (backDoubleWanted && (nowBack - lastBackUpTime) < DOUBLE_TAP_TIMEOUT) {
+                    backSingleTapRunnable?.let { handler.removeCallbacks(it) }
+                    backSingleTapRunnable = null
+                    lastBackUpTime = 0L
+                    if (popupReplyWantsTrigger(ShortcutTrigger.DOUBLE_TAP_BACK)) {
+                        OverlayPanelManager.openHeadsUpReply()
+                    } else {
+                        executeAction(doubleTapBackAction)
+                    }
+                    return true
+                }
+                lastBackUpTime = nowBack
+                if (backDoubleWanted) {
+                    // Hold the single press back long enough to see whether a second arrives.
+                    backSingleTapRunnable?.let { handler.removeCallbacks(it) }
+                    backSingleTapRunnable = Runnable { performBackSinglePress() }
+                    handler.postDelayed(backSingleTapRunnable!!, DOUBLE_TAP_TIMEOUT)
                     return true
                 }
 
@@ -462,6 +501,15 @@ class RecentsButtonService : AccessibilityService() {
     private fun isMediaPlaying(): Boolean {
         val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
         return audioManager.isMusicActive
+    }
+
+    /** What a plain Back press does: peel one overlay layer, else hand Back to the system. */
+    private fun performBackSinglePress() {
+        if (OverlayPanelManager.isPanelShowing) {
+            OverlayPanelManager.onBackPressed()
+        } else {
+            performGlobalAction(GLOBAL_ACTION_BACK)
+        }
     }
 
     private fun performRecentsSingleTap() {
